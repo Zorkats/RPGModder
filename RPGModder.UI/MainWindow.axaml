@@ -1,0 +1,105 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:models="clr-namespace:RPGModder.Core.Models;assembly=RPGModder.Core"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="500"
+        x:Class="RPGModder.UI.MainWindow"
+        Title="RPGModder"
+        Width="850" Height="550"
+        WindowStartupLocation="CenterScreen"
+        TransparencyLevelHint="AcrylicBlur"
+        Background="#1E1E1E"
+        ExtendClientAreaToDecorationsHint="True">
+
+    <Window.Styles>
+        <Style Selector="Button">
+            <Setter Property="Background" Value="#3E3E42"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="12,6"/>
+        </Style>
+        <Style Selector="Button:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#505055"/>
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="Padding" Value="8"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Margin" Value="0,2"/>
+        </Style>
+        <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#2D2D30"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto, *, Auto" Margin="20,40,20,20">
+
+        <Grid Grid.Row="0" ColumnDefinitions="*, Auto" Margin="0,0,0,15">
+            <StackPanel Spacing="5">
+                <TextBlock Text="RPGModder" FontSize="24" FontWeight="Bold" Foreground="White"/>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <TextBox Name="TxtGamePath" IsReadOnly="True" Width="300"
+                         Watermark="Select Game.exe..."
+                         Background="#252526" Foreground="#DDD"
+                         BorderThickness="1" BorderBrush="#333" CornerRadius="4"/>
+                <Button Name="BtnSelect" Content="Browse"/>
+            </StackPanel>
+        </Grid>
+
+        <TabControl Grid.Row="1" Theme="{StaticResource FluentTabControl}">
+
+            <TabItem Header="My Mods" FontSize="16" FontWeight="SemiBold">
+                <Border Margin="0,10,0,0"
+                        BorderBrush="#444" BorderThickness="2" CornerRadius="8"
+                        Background="#252526"
+                        DragDrop.AllowDrop="True" Name="DropZone">
+                    <Panel>
+                        <StackPanel Name="PlaceholderText" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8">
+                            <TextBlock Text="Drag Mod Folders Here" Foreground="#666" HorizontalAlignment="Center" FontSize="18"/>
+                            <TextBlock Text="(Folder must contain mod.json)" Foreground="#444" HorizontalAlignment="Center" FontSize="13"/>
+                        </StackPanel>
+
+                        <ListBox Name="LstMods" Background="Transparent" Foreground="White">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="models:ModManifest">
+                                    <Grid ColumnDefinitions="*, Auto">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="{Binding Metadata.Name}" FontWeight="Bold" FontSize="15" Foreground="#EEE"/>
+                                            <TextBlock Text="{Binding Metadata.Description}" FontSize="12" Foreground="#AAA" TextTrimming="CharacterEllipsis"/>
+                                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                                <TextBlock Text="by" Foreground="#666" FontSize="11"/>
+                                                <TextBlock Text="{Binding Metadata.Author}" Foreground="#888" FontSize="11"/>
+                                            </StackPanel>
+                                        </StackPanel>
+
+                                        <Border Grid.Column="1" Background="#333" CornerRadius="4" Padding="8,4" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Metadata.Version}" Foreground="#CCC" FontSize="12" FontWeight="Bold"/>
+                                        </Border>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Panel>
+                </Border>
+            </TabItem>
+
+            <TabItem Header="Creator Tools" FontSize="16">
+                <Grid>
+                    <TextBlock Text="Auto-Packer coming in v1.1"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="#555" FontSize="20"/>
+                </Grid>
+            </TabItem>
+
+        </TabControl>
+
+        <Border Grid.Row="2" Margin="0,10,0,0" BorderBrush="#333" BorderThickness="0,1,0,0" Padding="0,10,0,0">
+            <Grid ColumnDefinitions="*, Auto">
+                <TextBlock Name="TxtStatus" Text="Ready." Foreground="#007ACC" FontSize="12" FontWeight="SemiBold"/>
+                <TextBlock Text="v1.0.0" Foreground="#444" Grid.Column="1" FontSize="11"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

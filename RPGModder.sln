@@ -1,0 +1,28 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RPGModder.Core", "RPGModder.Core\RPGModder.Core.csproj", "{B45C1D95-C614-4EA4-9984-FC415E4ABEA5}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RPGModder.UI", "RPGModder.UI\RPGModder.UI.csproj", "{BE622A93-EA16-4C35-A889-8CAF8675D88C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RPGModder.Tests", "RPGModder.Tests\RPGModder.Tests.csproj", "{AEE2B834-92B0-4E1B-BDC8-9F5FFFF98FB9}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B45C1D95-C614-4EA4-9984-FC415E4ABEA5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B45C1D95-C614-4EA4-9984-FC415E4ABEA5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B45C1D95-C614-4EA4-9984-FC415E4ABEA5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B45C1D95-C614-4EA4-9984-FC415E4ABEA5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BE622A93-EA16-4C35-A889-8CAF8675D88C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BE622A93-EA16-4C35-A889-8CAF8675D88C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BE622A93-EA16-4C35-A889-8CAF8675D88C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BE622A93-EA16-4C35-A889-8CAF8675D88C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AEE2B834-92B0-4E1B-BDC8-9F5FFFF98FB9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AEE2B834-92B0-4E1B-BDC8-9F5FFFF98FB9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AEE2B834-92B0-4E1B-BDC8-9F5FFFF98FB9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AEE2B834-92B0-4E1B-BDC8-9F5FFFF98FB9}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
