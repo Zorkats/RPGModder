@@ -52,11 +52,31 @@ public class ConflictDetectionService
 
             if (mod.HasConflicts)
             {
-                var tooltip = $"Conflicts with: {string.Join(", ", conflictingMods)}\n" +
-                              $"Files: {string.Join(", ", conflictingFiles.Take(3))}";
-                if (conflictingFiles.Count > 3)
-                    tooltip += $" (+{conflictingFiles.Count - 3} more)";
-                mod.ConflictTooltip = tooltip;
+                // Smarter Tooltip
+                var lines = new List<string>();
+
+                // Group conflicts by "Overwritten By" vs "Overwrites"
+                var overwrittenFiles = conflictingFiles
+                    .Where(f => fileToMods[f].IndexOf(mod) < fileToMods[f].Count - 1)
+                    .ToList();
+
+                var overwritingFiles = conflictingFiles
+                    .Where(f => fileToMods[f].IndexOf(mod) > 0 && fileToMods[f].Last() == mod)
+                    .ToList();
+
+                if (overwrittenFiles.Any())
+                {
+                    lines.Add($"Overwritten by: {string.Join(", ", conflictingMods)}");
+                    lines.Add($"   ({overwrittenFiles.Count} files lost)");
+                }
+
+                if (overwritingFiles.Any())
+                {
+                    lines.Add($"Overwrites: {string.Join(", ", conflictingMods)}");
+                    lines.Add($"   ({overwritingFiles.Count} files winning)");
+                }
+
+                mod.ConflictTooltip = string.Join("\n", lines);
             }
             else
             {

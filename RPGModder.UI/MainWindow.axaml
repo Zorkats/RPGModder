@@ -8,58 +8,11 @@
         mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="550"
         x:Class="RPGModder.UI.MainWindow"
         Title="RPGModder"
-        Width="900" Height="600"
+        Width="1280" Height="720"
         WindowStartupLocation="CenterScreen"
         TransparencyLevelHint="AcrylicBlur"
         Background="#1E1E1E"
         ExtendClientAreaToDecorationsHint="True">
-
-    <Window.Styles>
-        <!-- Base Button -->
-        <Style Selector="Button">
-            <Setter Property="Background" Value="#3E3E42"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="CornerRadius" Value="4"/>
-            <Setter Property="Padding" Value="12,6"/>
-        </Style>
-        <Style Selector="Button:pointerover /template/ ContentPresenter">
-            <Setter Property="Background" Value="#505055"/>
-        </Style>
-        
-        <!-- Primary Action Button -->
-        <Style Selector="Button.primary">
-            <Setter Property="Background" Value="#0E639C"/>
-        </Style>
-        <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
-            <Setter Property="Background" Value="#1177BB"/>
-        </Style>
-        
-        <!-- Danger Button -->
-        <Style Selector="Button.danger">
-            <Setter Property="Background" Value="#5A1D1D"/>
-        </Style>
-        <Style Selector="Button.danger:pointerover /template/ ContentPresenter">
-            <Setter Property="Background" Value="#742525"/>
-        </Style>
-        
-        <!-- ListBox Item -->
-        <Style Selector="ListBoxItem">
-            <Setter Property="Padding" Value="10"/>
-            <Setter Property="CornerRadius" Value="6"/>
-            <Setter Property="Margin" Value="0,2"/>
-        </Style>
-        <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">
-            <Setter Property="Background" Value="#2D2D30"/>
-        </Style>
-        <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
-            <Setter Property="Background" Value="#37373D"/>
-        </Style>
-        
-        <!-- CheckBox -->
-        <Style Selector="CheckBox">
-            <Setter Property="Foreground" Value="White"/>
-        </Style>
-    </Window.Styles>
 
     <Grid RowDefinitions="Auto, *, Auto" Margin="20,40,20,20">
 
@@ -72,7 +25,13 @@
                     <TextBlock Name="TxtGameName" Text="No Game" Foreground="#4EC9B0" FontSize="12" FontWeight="SemiBold"/>
                 </Border>
             </StackPanel>
-
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" Margin="20,0,0,0" VerticalAlignment="Center">
+                <TextBlock Text="Profile:" VerticalAlignment="Center" Foreground="#AAA"/>
+                <ComboBox Name="CboProfiles" Width="140"/>
+                <Button Name="BtnAddProfile" Content="+" Padding="8,4" ToolTip.Tip="New Profile"/>
+                <Button Name="BtnSaveProfile" Content="💾" Padding="8,4" ToolTip.Tip="Save Profile"/>
+                <Button Name="BtnRemoveProfile" Content="🗑️" Padding="8,4" Classes="danger" ToolTip.Tip="Delete Profile"/>
+            </StackPanel>
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                 <!-- Game Selector Dropdown -->
                 <ComboBox Name="CmbDetectedGames" Width="280" 
@@ -130,6 +89,7 @@
                                     <ContextMenu>
                                         <MenuItem Header="📁 Open Folder" Name="CtxOpenFolder"/>
                                         <MenuItem Header="📄 View mod.json" Name="CtxViewManifest"/>
+                                        <MenuItem Header="⚔️ View Conflicts" Name="CtxViewConflicts"/> <Separator/>
                                         <Separator/>
                                         <MenuItem Header="⬆️ Move Up" Name="CtxMoveUp"/>
                                         <MenuItem Header="⬇️ Move Down" Name="CtxMoveDown"/>
@@ -146,7 +106,8 @@
                                             <!-- Drag Handle -->
                                             <TextBlock Grid.Column="0" Text="⋮⋮" Foreground="#555" FontSize="14"
                                                        VerticalAlignment="Center" Margin="0,0,8,0"
-                                                       Cursor="Hand" ToolTip.Tip="Drag to reorder"/>
+                                                       Cursor="Hand" ToolTip.Tip="Drag to reorder"
+                                                       PointerPressed="DragHandle_PointerPressed"/>
                                             
                                             <!-- Enable Checkbox -->
                                             <CheckBox Grid.Column="1" 
@@ -231,6 +192,13 @@
                                     Margin="10,0,0,0"
                                     ToolTip.Tip="Open game folder in Explorer"
                                     IsEnabled="False"/>
+
+                            <Button Name="BtnSaveManager" Grid.Column="4"
+                                    Content="💾 Save Manager"
+                                    Margin="10,0,0,0"
+                                    ToolTip.Tip="Manage Save Files and Backups"
+                                    IsEnabled="False"
+                                    Click="BtnSaveManager_Click"/>
 
                             <!-- Mod Count Stats -->
                             <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="15" VerticalAlignment="Center">
@@ -588,19 +556,22 @@
                         <Border Background="#252526" CornerRadius="6" Padding="15">
                             <StackPanel Spacing="12">
                                 <TextBlock Text="Mod Management" FontSize="16" FontWeight="SemiBold" Foreground="#EEE"/>
-                                
-                                <CheckBox Name="ChkSmartMerge" Content="Smart JSON merging (like Wrye Bash)" 
+
+                                <CheckBox Name="ChkUseSymlinks" Content="🚀 Use Symbolic Links (Instant Deploy)"
+                                          Foreground="#CCC" ToolTip.Tip="Uses shortcuts instead of copying files. Saves space and time."/>
+
+                                <CheckBox Name="ChkSmartMerge" Content="Smart JSON merging (like Wrye Bash)"
                                           Foreground="#CCC" IsChecked="True"/>
-                                <TextBlock Text="When enabled, mods that edit different records in the same file will be merged instead of overwritten."
-                                           Foreground="#666" FontSize="10" TextWrapping="Wrap" Margin="24,0,0,0"/>
-                                
-                                <Separator Background="#333"/>
-                                
-                                <CheckBox Name="ChkConfirmRemove" Content="Confirm before removing mods" 
-                                          Foreground="#CCC" IsChecked="True"/>
-                                
-                                <CheckBox Name="ChkAutoApply" Content="Auto-apply changes when enabling/disabling mods" 
-                                          Foreground="#CCC" IsChecked="False"/>
+
+                                <StackPanel Orientation="Horizontal" Margin="24,0,0,0"
+                                            IsVisible="{Binding #ChkSmartMerge.IsChecked}">
+                                    <CheckBox Name="ChkHardcoreMerge" Content="Hardcore Merging (Experimental)"
+                                              Foreground="#FF8888"/>
+                                </StackPanel>
+                                <TextBlock Text="Hardcore mode attempts to merge Arrays by ID. USE WITH CAUTION."
+                                           Foreground="#666" FontSize="10" Margin="48,0,0,0"
+                                           IsVisible="{Binding #ChkSmartMerge.IsChecked}"/>
+
                             </StackPanel>
                         </Border>
                         
@@ -640,7 +611,7 @@
                         <Border Background="#252526" CornerRadius="6" Padding="15">
                             <StackPanel Spacing="8">
                                 <TextBlock Text="About RPGModder" FontSize="16" FontWeight="SemiBold" Foreground="#EEE"/>
-                                <TextBlock Text="Version 1.0.0" Foreground="#888"/>
+                                <TextBlock Name="TxtVersionAbout" Text="Version ..." Foreground="#888"/>
                                 <TextBlock Text="A safe, non-destructive mod manager for RPG Maker MV/MZ games with Nexus Mods integration." 
                                            Foreground="#AAA" TextWrapping="Wrap"/>
                                 <TextBlock Text="Supports both standard and www/ folder structures." 
@@ -666,7 +637,7 @@
                         VerticalAlignment="Center" Margin="0,0,10,0"/>
                 <TextBlock Name="TxtStatus" Text="Ready. Select a game to begin." Foreground="#AAA" FontSize="12" 
                            VerticalAlignment="Center" Grid.Column="1"/>
-                <TextBlock Text="v1.0.0" Foreground="#555" Grid.Column="2" FontSize="11" VerticalAlignment="Center"/>
+                <TextBlock Name="TxtVersionFooter" Text="v..." Foreground="#555" Grid.Column="2" FontSize="11" VerticalAlignment="Center"/>
             </Grid>
         </Border>
     </Grid>

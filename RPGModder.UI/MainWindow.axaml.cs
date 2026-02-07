@@ -25,6 +25,7 @@ public partial class MainWindow : Window
 {
     private ModEngine? _engine;
     private ModProfile _profile = new();
+    private string _currentProfileName = "Default";
     private string _gameRoot = "";
     private string _gameExePath = "";
     private bool _hasPendingChanges = false;
@@ -37,6 +38,7 @@ public partial class MainWindow : Window
     private readonly ConflictDetectionService _conflictDetector = new();
     private readonly NexusApiService _nexus = new();
     private readonly SteamLaunchService _steamLauncher = new();
+    private readonly UpdateService _updater = new();
     private PackerResult? _currentAnalysis;
     private string? _tempExtractPath;
     private CancellationTokenSource? _scanCts;
@@ -55,6 +57,15 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        // 1. Get the version dynamically
+        var version = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version;
+        string versionString = version != null ? $"v{version.Major}.{version.Minor}.{version.Build}" : "v1.0.0";
+
+        // 2. Update BOTH labels
+        TxtVersionFooter.Text = versionString;
+        TxtVersionAbout.Text = $"Version {versionString.TrimStart('v')}";
+
         LstMods.ItemsSource = InstalledMods;
         LstChanges.ItemsSource = DetectedChanges;
         CmbDetectedGames.ItemsSource = DetectedGames;
@@ -74,7 +85,7 @@ public partial class MainWindow : Window
         // Mod list drag-drop reordering
         LstMods.AddHandler(DragDrop.DragOverEvent, LstMods_DragOver);
         LstMods.AddHandler(DragDrop.DropEvent, LstMods_Drop);
-        LstMods.PointerPressed += LstMods_PointerPressed;
+        LstMods.PointerPressed += DragHandle_PointerPressed;
 
         // Creator Tools tab events
         BtnBrowseWork.Click += BtnBrowseWork_Click;
@@ -90,6 +101,7 @@ public partial class MainWindow : Window
         // Phase 1.2: Context menu
         CtxOpenFolder.Click += CtxOpenFolder_Click;
         CtxViewManifest.Click += CtxViewManifest_Click;
+        CtxViewConflicts.Click += CtxViewConflicts_Click;
         CtxEnable.Click += CtxEnable_Click;
         CtxDisable.Click += CtxDisable_Click;
         CtxRemove.Click += CtxRemove_Click;
@@ -139,9 +151,15 @@ public partial class MainWindow : Window
 
         // Load cached games
         LoadCachedGames();
-        
+
+        // Initialize Mod Profiles
+        InitializeProfiles();
+
         // Initialize Nexus state
         InitializeNexusState();
+
+        // Initialize Auto-Updater
+        CheckUpdatesOnStartup();
     }
     
     private async void OnNxmUrlReceived(string url)
@@ -162,9 +180,9 @@ public partial class MainWindow : Window
     {
         if (!url.StartsWith("nxm://", StringComparison.OrdinalIgnoreCase))
             return;
-            
+
         SetStatus($"Processing NXM download: {url}", true);
-        
+
         // Parse the NXM URL
         // Format: nxm://gameDomain/mods/modId/files/fileId?key=xxx&expires=xxx&user_id=xxx
         try
@@ -172,50 +190,46 @@ public partial class MainWindow : Window
             var uri = new Uri(url);
             var gameDomain = uri.Host;
             var segments = uri.AbsolutePath.Trim('/').Split('/');
-            
+
             if (segments.Length >= 4 && segments[0] == "mods" && segments[2] == "files")
             {
                 var modId = int.Parse(segments[1]);
                 var fileId = int.Parse(segments[3]);
-                
+
                 // Parse query params
                 var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
                 var key = query["key"] ?? "";
                 var expires = long.Parse(query["expires"] ?? "0");
                 var userId = int.Parse(query["user_id"] ?? "0");
-                
+
                 if (!_nexus.IsAuthenticated)
                 {
                     SetStatus("Connect to Nexus first to download mods", false);
-                    // Switch to Nexus tab
                     MainTabControl.SelectedIndex = 2; // Nexus Mods tab
                     return;
                 }
-                
+
                 // Get download links
                 var links = await _nexus.GetDownloadLinksFromNxmAsync(gameDomain, modId, fileId, key, expires, userId);
-                
+
                 if (links.Count > 0)
                 {
-                    // Get mod info for the filename
+                    // Get mod info (Required for the installer to know the ID/Version)
                     var modInfo = await _nexus.GetModAsync(gameDomain, modId);
-                    var fileName = modInfo?.Name ?? $"mod_{modId}";
-                    
-                    // Queue download
-                    // TODO: Implement actual download via DownloadManager
-                    SetStatus($"Download queued: {fileName}", true);
-                    
-                    // For now, open in browser if no download manager
-                    var downloadUrl = links[0].Uri;
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+
+                    if (modInfo != null)
                     {
-                        FileName = downloadUrl,
-                        UseShellExecute = true
-                    });
+                        // CONNECT THE DOTS: Call the actual download method
+                        await DownloadAndInstallMod(links[0].Uri, modInfo.Name, modInfo);
+                    }
+                    else
+                    {
+                        SetStatus("Could not retrieve mod details from Nexus.", false);
+                    }
                 }
                 else
                 {
-                    SetStatus("Could not get download link - you may need Nexus Premium", false);
+                    SetStatus("Could not get download link - you may need Nexus Premium.", false);
                 }
             }
         }
@@ -407,6 +421,18 @@ public partial class MainWindow : Window
 
             _gameRoot = dir;
             _gameExePath = exePath;
+            try
+            {
+                string testPath = Path.Combine(dir, ".rpgmodder_write_test");
+                File.WriteAllText(testPath, "test");
+                File.Delete(testPath);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                SetStatus("ERROR: No write permission! Please run RPGModder as Administrator.", false);
+                ClearGameState();
+                return;
+            }
             TxtGamePath.Text = exePath;
             TxtGameName.Text = gameName;
             GameBadge.IsVisible = true;
@@ -416,6 +442,16 @@ public partial class MainWindow : Window
             _engine = new ModEngine(exePath);
             await System.Threading.Tasks.Task.Run(() => _engine.InitializeSafeState());
 
+            if (_engine.JustCreatedSaveBackup)
+            {
+                await new RPGModder.UI.Dialogs.MessageBox(
+                    "Save Backup Created",
+                    "Since this is your first time using Profiles (or updating), we created a safety backup of your current save files.\n\n" +
+                    "Location: ModManager_Backups/Saves/ORIGINAL_VANILLA\n\n" +
+                    "If you ever lose progress, you can restore files from there."
+                ).ShowDialog(this);
+            }
+
             _profile = new ModProfile();
             LoadProfile();
             RefreshModList();
@@ -424,6 +460,7 @@ public partial class MainWindow : Window
             BtnLaunchGame.IsEnabled = true;
             BtnRebuild.IsEnabled = true;
             BtnOpenGameFolder.IsEnabled = true;
+            BtnSaveManager.IsEnabled = true;
 
             // Save last used game
             _settings.Settings.LastGamePath = exePath;
@@ -700,6 +737,13 @@ public partial class MainWindow : Window
     {
         if (_engine == null) return;
 
+        string gameProcessName = Path.GetFileNameWithoutExtension(_gameExePath);
+        if (Process.GetProcessesByName(gameProcessName).Any())
+        {
+            SetStatus("⚠️ Cannot rebuild: The game is running! Please close it first.", false);
+            return;
+        }
+
         SetStatus("Rebuilding game...", true);
         BtnRebuild.IsEnabled = false;
 
@@ -710,8 +754,10 @@ public partial class MainWindow : Window
                 _profile.EnabledMods.Add(mod.FolderName);
             SaveProfile();
 
-            // Apply smart merge setting
+            // Apply smart merge setting, hardcore, and symlinks.
             _engine.UseMerging = ChkSmartMerge.IsChecked ?? true;
+            _engine.UseHardcoreMerging = ChkHardcoreMerge.IsChecked ?? false;
+            _engine.UseSymlinks = ChkUseSymlinks.IsChecked ?? false;
 
             await System.Threading.Tasks.Task.Run(() => _engine.RebuildGame(_profile));
 
@@ -755,7 +801,10 @@ public partial class MainWindow : Window
         }
 
         if (_hasPendingChanges)
-            SetStatus("Warning: Launching with unapplied changes.", true);
+        {
+            SetStatus("Cannot launch: You have pending changes! Click 'Apply Changes' (Rebuild) first.", false);
+            return;
+        }
 
         try
         {
@@ -1129,7 +1178,7 @@ public partial class MainWindow : Window
 
     #endregion
 
-    #region Phase 1.2: Search & Filter
+    #region  Search & Filter
 
     private string _searchFilter = "";
     private List<ModListItem> _allMods = new();
@@ -1168,7 +1217,7 @@ public partial class MainWindow : Window
 
     #endregion
 
-    #region Phase 1.2: Context Menu
+    #region Context Menu
 
     private ModListItem? GetSelectedMod()
     {
@@ -1297,32 +1346,235 @@ public partial class MainWindow : Window
         SetStatus($"Moved '{mod.Name}' down in load order", true);
     }
 
+    private async void CtxViewConflicts_Click(object? sender, RoutedEventArgs e)
+    {
+        var mod = GetSelectedMod();
+        if (mod == null) return;
+
+        if (mod.ConflictingFiles.Count == 0)
+        {
+            await new RPGModder.UI.Dialogs.MessageBox("Clean", "No conflicts detected.").ShowDialog(this);
+            return;
+        }
+
+        // Generate the full report dynamically
+        var fullReport = _conflictDetector.GenerateReport(_allMods);
+
+        // Filter: Get only conflicts that involve THIS mod
+        var myConflicts = fullReport.Conflicts
+            .Where(c => c.Mods.Contains(mod.Name))
+            .ToList();
+
+        // Launch the Ultimate Viewer
+        var viewer = new RPGModder.UI.Dialogs.ConflictViewerWindow(mod.Name, myConflicts);
+        await viewer.ShowDialog(this);
+    }
+
     #endregion
 
-    #region Phase 1.3: Drag-Drop Reordering
+    #region Mod Profiles
+
+    private void InitializeProfiles()
+    {
+        RefreshProfileList();
+        _currentProfileName = CboProfiles.SelectedItem?.ToString() ?? "Default";
+        CboProfiles.SelectionChanged += CboProfiles_SelectionChanged;
+        BtnAddProfile.Click += BtnAddProfile_Click;
+        BtnSaveProfile.Click += BtnSaveProfile_Click;
+        BtnRemoveProfile.Click += BtnRemoveProfile_Click;
+    }
+
+    private void RefreshProfileList()
+    {
+        if (string.IsNullOrEmpty(_gameRoot)) return;
+
+        var profiles = Directory.GetFiles(_gameRoot, "mod_profile_*.json")
+                                .Select(f => Path.GetFileNameWithoutExtension(f).Replace("mod_profile_", ""))
+                                .ToList();
+
+        if (!profiles.Contains("Default")) profiles.Insert(0, "Default");
+
+        var current = CboProfiles.SelectedItem?.ToString() ?? "Default";
+
+        CboProfiles.ItemsSource = profiles;
+        CboProfiles.SelectedItem = profiles.Contains(current) ? current : "Default";
+    }
+
+    private void CboProfiles_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (CboProfiles.SelectedItem is string profileName)
+        {
+            // Prevent reloading if clicking the same one
+            if (profileName == _currentProfileName) return;
+
+            LoadProfile(profileName);
+            RefreshModList();
+        }
+    }
+
+    private async void BtnAddProfile_Click(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new RPGModder.UI.Dialogs.TextInputDialog("New Profile", "Enter profile name (e.g. Hardcore)");
+        var result = await dialog.ShowDialog<bool>(this);
+
+        if (result && !string.IsNullOrWhiteSpace(dialog.ResultText))
+        {
+            string cleanName = string.Join("", dialog.ResultText.Split(Path.GetInvalidFileNameChars()));
+
+            // Save current configuration as this new profile
+            _profile.LoadOrder = InstalledMods.Where(m => m.IsEnabled).Select(m => m.FolderName).ToList();
+
+            string path = Path.Combine(_gameRoot, $"mod_profile_{cleanName}.json");
+            File.WriteAllText(path, JsonConvert.SerializeObject(_profile, Formatting.Indented));
+
+            RefreshProfileList();
+            CboProfiles.SelectedItem = cleanName;
+
+            SetStatus($"Profile '{cleanName}' created.", true);
+        }
+    }
+
+    private async void BtnSaveProfile_Click(object? sender, RoutedEventArgs e)
+    {
+        string currentProfile = CboProfiles.SelectedItem?.ToString() ?? "Default";
+        string filename = currentProfile == "Default" ? "profile.json" : $"mod_profile_{currentProfile}.json";
+        string path = Path.Combine(_gameRoot, filename);
+
+        try
+        {
+            // 1. Capture current state
+            _profile.EnabledMods = InstalledMods
+                .Where(m => m.IsEnabled)
+                .Select(m => m.FolderName)
+                .ToList();
+
+            _profile.LoadOrder = InstalledMods
+                .Select(m => m.FolderName)
+                .ToList();
+
+            // 2. Write to disk
+            File.WriteAllText(path, JsonConvert.SerializeObject(_profile, Formatting.Indented));
+
+            var msg = new RPGModder.UI.Dialogs.MessageBox("Success", $"Profile '{currentProfile}' saved successfully!");
+            await msg.ShowDialog(this);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Failed to save profile: {ex.Message}", false);
+        }
+    }
+
+    private async void BtnRemoveProfile_Click(object? sender, RoutedEventArgs e)
+    {
+        string currentProfile = CboProfiles.SelectedItem?.ToString() ?? "Default";
+
+        if (currentProfile == "Default")
+        {
+            await new RPGModder.UI.Dialogs.MessageBox("Error", "You cannot delete the Default profile.").ShowDialog(this);
+            return;
+        }
+
+        var confirm = new RPGModder.UI.Dialogs.MessageBox("Confirm Delete",
+            $"Are you sure you want to delete profile '{currentProfile}'?\nThis will switch you back to Default.", true);
+
+        var result = await confirm.ShowDialog<bool>(this);
+
+        if (result)
+        {
+            string filename = $"mod_profile_{currentProfile}.json";
+            string path = Path.Combine(_gameRoot, filename);
+
+            if (File.Exists(path)) File.Delete(path);
+
+            // Reload list and force Default
+            RefreshProfileList();
+            CboProfiles.SelectedItem = "Default";
+
+            SetStatus($"Profile '{currentProfile}' deleted.", true);
+        }
+    }
+
+
+    private void LoadProfile(string newProfileName)
+    {
+        if (_engine == null) return;
+
+        // 1. SAVE SWAP
+        if (_currentProfileName != newProfileName)
+        {
+            try
+            {
+                // Only swap if the engine is ready
+                if (!string.IsNullOrEmpty(_gameRoot))
+                {
+                    SetStatus($"Swapping saves: {_currentProfileName} ➡ {newProfileName}...", true);
+                    _engine.SwapSaveFiles(_currentProfileName, newProfileName);
+                    _currentProfileName = newProfileName;
+                }
+            }
+            catch (Exception ex)
+            {
+                SetStatus($"Error swapping saves: {ex.Message}", false);
+                // Important: If swap fails, we might want to stop here to prevent
+                // loading the wrong mod list on top of the wrong saves.
+                return;
+            }
+        }
+
+        // 2. Load JSON (Existing Logic)
+        string filename = newProfileName == "Default" ? "profile.json" : $"mod_profile_{newProfileName}.json";
+        string path = Path.Combine(_gameRoot, filename);
+
+        if (File.Exists(path)) {
+            try {
+                _profile = JsonConvert.DeserializeObject<ModProfile>(File.ReadAllText(path)) ?? new ModProfile();
+            } catch { _profile = new ModProfile(); }
+        } else {
+            _profile = new ModProfile();
+        }
+
+        RefreshModList();
+        SetStatus($"Profile switched to '{newProfileName}'.", true);
+    }
+
+    #endregion
+
+    #region Save Manager
+
+    private async void BtnSaveManager_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_engine == null || string.IsNullOrEmpty(_gameRoot)) return;
+
+        // Pass game root and "usesWww" flag to locate saves correctly
+        var win = new RPGModder.UI.Dialogs.SaveManagerWindow(_gameRoot, _engine.UsesWwwFolder);
+        await win.ShowDialog(this);
+    }
+
+    #endregion
+    #region Drag-Drop Reordering
 
     private ModListItem? _draggedMod;
 
-    private async void LstMods_PointerPressed(object? sender, PointerPressedEventArgs e)
+    private async void DragHandle_PointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        // Only start drag on left button
-        if (!e.GetCurrentPoint(LstMods).Properties.IsLeftButtonPressed)
+        // 1. Validate Input
+        if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed)
             return;
 
-        // Find which mod item was clicked
-        var point = e.GetPosition(LstMods);
-        var item = GetModItemAtPoint(point);
-        
-        if (item == null) return;
+        if (sender is not Control dragHandle) return;
 
-        _draggedMod = item;
+        // 2. Find the DataContext (The ModListItem)
+        // Since the TextBlock is inside the DataTemplate, its DataContext is the ModListItem
+        if (dragHandle.DataContext is not ModListItem modItem) return;
 
-        // Start drag operation
+        // 3. Initiate Drag
+        _draggedMod = modItem;
         var dataObject = new DataObject();
-        dataObject.Set("ModListItem", item);
+        dataObject.Set("ModListItem", modItem);
 
-        var result = await DragDrop.DoDragDrop(e, dataObject, DragDropEffects.Move);
-        
+        // We use the DragHandle as the visual source
+        await DragDrop.DoDragDrop(e, dataObject, DragDropEffects.Move);
+
         _draggedMod = null;
     }
 
@@ -1333,6 +1585,7 @@ public partial class MainWindow : Window
         if (e.Data.Contains("ModListItem"))
         {
             e.DragEffects = DragDropEffects.Move;
+            e.Handled = true;
         }
     }
 
@@ -1394,7 +1647,7 @@ public partial class MainWindow : Window
 
     #endregion
 
-    #region Phase 1.3: Context Menu Remove
+    #region Context Menu Remove
 
     private async void CtxRemove_Click(object? sender, RoutedEventArgs e)
     {
@@ -1433,7 +1686,7 @@ public partial class MainWindow : Window
 
     #endregion
 
-    #region Phase 1.2: Settings
+    #region Settings
 
     private void UpdateCachedGamesCount()
     {
@@ -1510,7 +1763,7 @@ public partial class MainWindow : Window
 
     #endregion
 
-    #region Phase 2: Nexus Mods
+    #region Nexus Mods
 
     private async void InitializeNexusState()
     {
@@ -2231,6 +2484,23 @@ public partial class MainWindow : Window
         base.OnClosed(e);
         _scanCts?.Cancel();
         CleanupTempExtract();
+    }
+
+    private async void CheckUpdatesOnStartup()
+    {
+        // Don't block the UI thread, wait a few seconds so the app loads first
+        await Task.Delay(2000);
+
+        try
+        {
+            var update = await _updater.CheckForUpdatesAsync();
+            if (update != null)
+            {
+                var dialog = new RPGModder.UI.Dialogs.UpdateDialog(_updater, update);
+                await dialog.ShowDialog(this);
+            }
+        }
+        catch { } // Fail silently on startup checks
     }
 
     #endregion

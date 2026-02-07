@@ -1,0 +1,47 @@
+﻿<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:dialogs="clr-namespace:RPGModder.UI.Dialogs"
+        x:Class="RPGModder.UI.Dialogs.ConflictViewerWindow"
+        Title="Conflict Analysis Matrix" Width="900" Height="600"
+        WindowStartupLocation="CenterOwner"
+        Background="#1E1E1E" ExtendClientAreaToDecorationsHint="True">
+
+    <Grid RowDefinitions="Auto, Auto, *, Auto" Margin="20">
+        <StackPanel Spacing="5">
+            <TextBlock Text="Conflict Matrix" FontSize="22" FontWeight="Bold" Foreground="White"/>
+            <TextBlock Name="TxtSummary" Text="Analyzing..." Foreground="#888" FontFamily="Consolas"/>
+        </StackPanel>
+
+        <TextBox Grid.Row="1" Name="TxtSearch" Watermark="🔍 Search files..."
+                 Margin="0,15,0,10" Background="#252526" Foreground="#DDD"
+                 BorderThickness="1" BorderBrush="#444" CornerRadius="4"/>
+
+        <Border Grid.Row="2" BorderBrush="#333" BorderThickness="1" CornerRadius="4" Background="#252526">
+            <ListBox Name="LstConflicts" Background="Transparent">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="dialogs:ConflictViewModel">
+                        <Border BorderBrush="#333" BorderThickness="0,0,0,1" Padding="5">
+                            <Grid ColumnDefinitions="80, *, 200">
+                                <Border Background="{Binding StatusColor}" CornerRadius="3"
+                                        HorizontalAlignment="Left" Padding="6,2" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Status}" Foreground="#111" FontWeight="Bold" FontSize="10"/>
+                                </Border>
+
+                                <TextBlock Grid.Column="1" Text="{Binding FilePath}" Foreground="#DDD"
+                                           FontFamily="Consolas" VerticalAlignment="Center" Margin="10,0"/>
+
+                                <TextBlock Grid.Column="2" Text="{Binding Details}" Foreground="#AAA"
+                                           FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+
+        <Grid Grid.Row="3" ColumnDefinitions="*, Auto" Margin="0,15,0,0">
+            <TextBlock Name="TxtCount" Text="0 files" VerticalAlignment="Center" Foreground="#666"/>
+            <Button Grid.Column="1" Content="Close" Click="BtnClose_Click"/>
+        </Grid>
+    </Grid>
+</Window>

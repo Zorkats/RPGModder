@@ -1,0 +1,19 @@
+﻿<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="RPGModder.UI.Dialogs.MessageBox"
+        Title="Message" Width="400" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" CanResize="False"
+        SystemDecorations="BorderOnly" Background="#1E1E1E" ExtendClientAreaToDecorationsHint="True">
+
+    <Border BorderBrush="#444" BorderThickness="1">
+        <StackPanel Margin="20" Spacing="20">
+            <TextBlock Name="TxtTitle" Text="Title" FontWeight="Bold" FontSize="16" Foreground="White"/>
+            <TextBlock Name="TxtMessage" Text="Message goes here..." TextWrapping="Wrap" Foreground="#DDD"/>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                <Button Name="BtnCancel" Content="Cancel" IsVisible="False"/>
+                <Button Name="BtnOk" Content="OK" Classes="primary"/>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>

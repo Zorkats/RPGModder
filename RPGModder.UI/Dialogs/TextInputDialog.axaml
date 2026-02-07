@@ -1,0 +1,19 @@
+﻿<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="RPGModder.UI.Dialogs.TextInputDialog"
+        Title="Input" Width="400" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" SystemDecorations="BorderOnly"
+        Background="#1E1E1E" ExtendClientAreaToDecorationsHint="True">
+
+    <Border BorderBrush="#444" BorderThickness="1">
+        <StackPanel Margin="20" Spacing="15">
+            <TextBlock Name="TxtTitle" Text="Enter Value" FontWeight="Bold" Foreground="White"/>
+            <TextBox Name="TxtInput" Background="#252526" Foreground="White"/>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                <Button Content="Cancel" Click="BtnCancel_Click"/>
+                <Button Content="OK" Classes="primary" Click="BtnOk_Click"/>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>

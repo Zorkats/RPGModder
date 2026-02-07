@@ -19,36 +19,37 @@ class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        // Try to create/acquire mutex
-        _mutex = new Mutex(true, MutexName, out bool createdNew);
-        
-        if (!createdNew)
-        {
-            // Another instance is running - send args via pipe and exit
-            if (args.Length > 0)
-            {
-                SendToExistingInstance(args[0]);
-            }
-            return;
-        }
-        
         try
         {
-            // Start the IPC listener for receiving URLs from other instances
-            _ = StartIpcListenerAsync();
-            
-            // Store args for initial processing
-            if (args.Length > 0)
-            {
-                InitialNxmUrl = args[0];
-            }
-            
-            BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+            BuildAvaloniaApp()
+                .StartWithClassicDesktopLifetime(args);
         }
-        finally
+        catch (Exception ex)
         {
-            _mutex?.ReleaseMutex();
-            _mutex?.Dispose();
+            string crashDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RPGModder");
+            if (!Directory.Exists(crashDir)) Directory.CreateDirectory(crashDir);
+
+            string crashFile = Path.Combine(crashDir, "crash.log");
+
+            string report = "=== RPGModder Crash Report ===\n" +
+                            $"Time: {DateTime.Now}\n" +
+                            $"Version: 1.0.0\n" +
+                            "Please report this issue on GitHub or Nexus Mods.\n\n" +
+                            "ERROR DETAILS:\n" +
+                            "--------------------------------------------------\n" +
+                            $"{ex}";
+
+            File.WriteAllText(crashFile, report);
+
+            // Try to open the log file for the user
+            try
+            {
+                new System.Diagnostics.Process
+                {
+                    StartInfo = new System.Diagnostics.ProcessStartInfo(crashFile) { UseShellExecute = true }
+                }.Start();
+            }
+            catch { }
         }
     }
     

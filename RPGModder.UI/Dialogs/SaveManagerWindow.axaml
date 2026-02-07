@@ -1,0 +1,40 @@
+﻿<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:dialogs="clr-namespace:RPGModder.UI.Dialogs"  x:Class="RPGModder.UI.Dialogs.SaveManagerWindow"
+        Title="Save Manager" Width="600" Height="450"
+        WindowStartupLocation="CenterOwner"
+        Background="#1E1E1E" ExtendClientAreaToDecorationsHint="True">
+
+    <Grid RowDefinitions="Auto, *, Auto" Margin="20">
+        <StackPanel Spacing="5">
+            <TextBlock Text="💾 Save File Manager" FontSize="18" FontWeight="Bold" Foreground="White"/>
+            <TextBlock Name="TxtPath" Text="Location: ..." Foreground="#888" FontSize="12"/>
+        </StackPanel>
+
+        <Border Grid.Row="1" Margin="0,15" BorderBrush="#333" BorderThickness="1" CornerRadius="4" Background="#252526">
+            <ListBox Name="LstSaves" Background="Transparent">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="dialogs:SaveFileItem">
+                        <Grid ColumnDefinitions="*, Auto, Auto" Margin="0,2">
+                            <StackPanel Spacing="2" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding FileName}" FontWeight="SemiBold" Foreground="White"/>
+                                <TextBlock Text="{Binding LastModified}" FontSize="10" Foreground="#AAA"/>
+                            </StackPanel>
+
+                            <Button Grid.Column="1" Content="Backup" Margin="0,0,10,0" Padding="10,5" FontSize="11"
+                                    Click="BtnBackup_Click" Tag="{Binding}"/>
+
+                            <Button Grid.Column="2" Content="Restore" Padding="10,5" FontSize="11" Classes="primary"
+                                    Click="BtnRestore_Click" Tag="{Binding}"/>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+            <Button Content="Open Folder" Click="BtnOpenFolder_Click"/>
+            <Button Content="Close" Click="BtnClose_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

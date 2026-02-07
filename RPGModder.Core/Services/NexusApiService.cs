@@ -205,31 +205,41 @@ public class NexusApiService : IDisposable
 
         try
         {
-            // Fetch from multiple endpoints in parallel
-            var latestTask = GetLatestModsAsync(gameDomain);
-            var trendingTask = GetTrendingModsAsync(gameDomain);
-            var updatedTask = GetUpdatedModsAsync(gameDomain);
-            var monthlyTask = GetUpdatedModsWithPeriodAsync(gameDomain, "1m"); // Last month
-
-            await Task.WhenAll(latestTask, trendingTask, updatedTask, monthlyTask);
-
             var allMods = new List<NexusMod>();
 
-            if (latestTask.Result.Success)
-                allMods.AddRange(latestTask.Result.Mods);
-            if (trendingTask.Result.Success)
-                allMods.AddRange(trendingTask.Result.Mods);
-            if (updatedTask.Result.Success)
-                allMods.AddRange(updatedTask.Result.Mods);
-            if (monthlyTask.Result.Success)
-                allMods.AddRange(monthlyTask.Result.Mods);
+            // 1. Get Latest Mods
+            var latestResult = await GetLatestModsAsync(gameDomain);
+            if (latestResult.Success)
+                allMods.AddRange(latestResult.Mods);
 
-            // Remove duplicates and filter unavailable/hidden mods
+            await Task.Delay(100); // Throttle to prevent API Rate Limiting
+
+            // 2. Get Trending Mods
+            var trendingResult = await GetTrendingModsAsync(gameDomain);
+            if (trendingResult.Success)
+                allMods.AddRange(trendingResult.Mods);
+
+            await Task.Delay(100); // Throttle
+
+            // 3. Get Updated Mods
+            var updatedResult = await GetUpdatedModsAsync(gameDomain);
+            if (updatedResult.Success)
+                allMods.AddRange(updatedResult.Mods);
+
+            await Task.Delay(100); // Throttle
+
+            // 4. Get Monthly Updates (Last 30 days)
+            var monthlyResult = await GetUpdatedModsWithPeriodAsync(gameDomain, "1m");
+            if (monthlyResult.Success)
+                allMods.AddRange(monthlyResult.Mods);
+
+            // 5. Deduplicate and Filter
+            // We filter out mods that are hidden/unavailable or have no name
             var uniqueMods = allMods
-                .Where(m => m.Available && !string.IsNullOrEmpty(m.Name)) // Filter hidden/deleted
-                .GroupBy(m => m.ModId)
-                .Select(g => g.First())
-                .OrderByDescending(m => m.Downloads)
+                .Where(m => m.Available && !string.IsNullOrEmpty(m.Name))
+                .GroupBy(m => m.ModId) // Group by ID to find duplicates
+                .Select(g => g.First()) // Take the first instance of each ID
+                .OrderByDescending(m => m.Downloads) // Sort by popularity
                 .ToList();
 
             return new NexusSearchResult
@@ -503,14 +513,14 @@ public class NexusApiService : IDisposable
     /// </summary>
     public static readonly Dictionary<string, string> KnownRpgMakerGames = new(StringComparer.OrdinalIgnoreCase)
     {
-        // Fear & Hunger series - all variations
+        // Fear & Hunger series
         { "Fear & Hunger", "fearandhunger" },
         { "Fear and Hunger", "fearandhunger" },
         { "FearHunger", "fearandhunger" },
         { "FearandHunger", "fearandhunger" },
         { "Fear_and_Hunger", "fearandhunger" },
-        
-        // Fear & Hunger 2 - all variations
+
+        // Fear & Hunger 2
         { "Fear & Hunger 2: Termina", "fearandhunger2termina" },
         { "Fear and Hunger 2: Termina", "fearandhunger2termina" },
         { "Fear & Hunger 2 Termina", "fearandhunger2termina" },
@@ -520,25 +530,21 @@ public class NexusApiService : IDisposable
         { "FearandHunger2Termina", "fearandhunger2termina" },
         { "Termina", "fearandhunger2termina" },
         { "FH2", "fearandhunger2termina" },
-        
+
         // Look Outside
         { "Look Outside", "lookoutside" },
         { "LookOutside", "lookoutside" },
-        
+
         // Popular RPG Maker games
         { "Omori", "omori" },
-        { "OMORI", "omori" },
         { "OneShot", "oneshot" },
         { "One Shot", "oneshot" },
-        { "ONESHOT", "oneshot" },
         { "To the Moon", "tothemoon" },
         { "ToTheMoon", "tothemoon" },
         { "Lisa: The Painful", "lisathepainful" },
         { "Lisa The Painful", "lisathepainful" },
         { "LISA", "lisathepainful" },
-        { "LISA: The Painful", "lisathepainful" },
         { "Ib", "ib" },
-        { "IB", "ib" },
         { "Yume Nikki", "yumenikki" },
         { "YumeNikki", "yumenikki" },
         { "RPG Maker MV", "rpgmakermv" },
@@ -555,12 +561,7 @@ public class NexusApiService : IDisposable
         { "Space Funeral", "spacefuneral" },
         { "Jimmy and the Pulsating Mass", "jimmyandthepulsatingmass" },
         { "HEARTBEAT", "heartbeat" },
-        { "Heartbeat", "heartbeat" },
         { "Escaped Chasm", "escapedchasm" },
-        { "DELTARUNE", "deltarune" },
-        { "Deltarune", "deltarune" },
-        { "Undertale", "undertale" },
-        { "UNDERTALE", "undertale" },
     };
 
     /// <summary>
