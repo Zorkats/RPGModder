@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using RPGModder.Core.Models;
@@ -110,7 +111,8 @@ public class ModPackerService
                             if (newPlugins.Count == 0)
                             {
                                 // plugins.js changed but no new plugins detected - include as modified
-                                result.Warnings.Add("plugins.js was modified but no new plugins were detected. Including as full replacement.");
+                                result.Warnings.Add(
+                                    "plugins.js was modified but no new plugins were detected. Including as full replacement.");
                                 result.ModifiedFiles[NormalizePath(relativePath)] = workFilePath;
                             }
                         }
@@ -119,6 +121,22 @@ public class ModPackerService
                             // Regular modified file
                             result.ModifiedFiles[NormalizePath(relativePath)] = workFilePath;
                         }
+                    }
+                }
+            }
+
+            foreach (var (relativePath, sourcePath) in result.NewFiles)
+            {
+                if (IsPluginFile(relativePath))
+                {
+                    string pluginName = Path.GetFileNameWithoutExtension(relativePath);
+
+                    // Only add if not already extracted from plugins.js
+                    if (!result.NewPlugins.Any(p => p.Name.Equals(pluginName, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        var entry = GeneratePluginEntryFromFile(sourcePath, pluginName);
+                        result.NewPlugins.Add(entry);
+                        result.Warnings.Add($"Auto-detected plugin script '{pluginName}'. Default parameters applied.");
                     }
                 }
             }
@@ -235,6 +253,7 @@ public class ModPackerService
                 return true;
             }
         }
+
         return false;
     }
 
@@ -256,7 +275,7 @@ public class ModPackerService
         // For larger files, use streaming comparison
         using var fs1 = File.OpenRead(path1);
         using var fs2 = File.OpenRead(path2);
-        
+
         byte[] buffer1 = new byte[4096];
         byte[] buffer2 = new byte[4096];
 
@@ -365,6 +384,51 @@ public class ModPackerService
 
         return new();
     }
+    private bool IsPluginFile(string relativePath)
+    {
+        string normalized = NormalizePath(relativePath);
+        // Supports standard js/plugins and www/js/plugins (for deployed games)
+        return (normalized.IndexOf("js/plugins/", StringComparison.OrdinalIgnoreCase) >= 0)
+               && normalized.EndsWith(".js", StringComparison.OrdinalIgnoreCase);
+    }
 
-    #endregion
+    private PluginEntry GeneratePluginEntryFromFile(string filePath, string name)
+    {
+        string description = "";
+
+        // Try to scrape a description from the file header
+        try
+        {
+            foreach (var line in File.ReadLines(filePath).Take(50))
+            {
+                if (line.Contains("@plugindesc"))
+                {
+                    // Match everything after @plugindesc
+                    var match = Regex.Match(line, @"@plugindesc\s+(.*)");
+                    if (match.Success)
+                    {
+                        description = match.Groups[1].Value.Trim();
+                        break;
+                    }
+                }
+            }
+        }
+        catch { }
+
+        // If no description was found, verify if it's really empty or just missing
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            description = "(Auto-detected) No description found in script file.";
+        }
+
+        return new PluginEntry
+        {
+            Name = name,
+            Status = true,
+            Description = description,
+            Parameters = new Dictionary<string, string>()
+        };
+    }
+
+#endregion
 }

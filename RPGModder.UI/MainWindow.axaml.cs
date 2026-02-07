@@ -873,11 +873,72 @@ public partial class MainWindow : Window
 
     private async void BtnBrowseVanilla_Click(object? sender, RoutedEventArgs e)
     {
+        // 1. Auto-Detect Feature: Check for our own Safe-State Backup
+        if (!string.IsNullOrEmpty(_gameRoot))
+        {
+            string cleanBackup = Path.Combine(_gameRoot, "ModManager_Backups", "Clean_Vanilla");
+            if (Directory.Exists(cleanBackup))
+            {
+                if (string.IsNullOrEmpty(TxtVanillaFolder.Text))
+                {
+                    TxtVanillaFolder.Text = cleanBackup;
+                    SetStatus("Auto-selected clean vanilla backup from current game.", true);
+                    ClearAnalysis();
+                    return;
+                }
+            }
+        }
+
+        // 2. Manual Fallback
         var folder = await PickFolder("Select Clean Vanilla Game Folder");
         if (folder != null)
         {
             TxtVanillaFolder.Text = folder;
             ClearAnalysis();
+        }
+    }
+
+    private void CtxRemoveChange_Click(object? sender, RoutedEventArgs e)
+    {
+        if (LstChanges.SelectedItem is not ChangeItem item || _currentAnalysis == null) return;
+
+        // 1. Remove from UI
+        DetectedChanges.Remove(item);
+
+        // 2. Remove from Analysis Data (So it doesn't get generated into mod.json)
+        string path = item.Path;
+
+        switch (item.Type)
+        {
+            case "NEW":
+                if (_currentAnalysis.NewFiles.ContainsKey(path))
+                    _currentAnalysis.NewFiles.Remove(path);
+                break;
+
+            case "MOD":
+                if (_currentAnalysis.ModifiedFiles.ContainsKey(path))
+                    _currentAnalysis.ModifiedFiles.Remove(path);
+                break;
+
+            case "PATCH":
+                if (_currentAnalysis.JsonPatches.ContainsKey(path))
+                    _currentAnalysis.JsonPatches.Remove(path);
+                break;
+
+            case "PLUGIN":
+                var plugin = _currentAnalysis.NewPlugins.FirstOrDefault(p => p.Name == path);
+                if (plugin != null) _currentAnalysis.NewPlugins.Remove(plugin);
+                break;
+        }
+
+        // Update counts
+
+        TxtChangeCount.Text = $"{_currentAnalysis.TotalChanges} changes";
+
+        if (_currentAnalysis.TotalChanges == 0)
+        {
+            BtnGeneratePackage.IsEnabled = false;
+            TxtPackerStatus.Text = "All changes removed.";
         }
     }
 
@@ -2021,12 +2082,68 @@ public partial class MainWindow : Window
 
         if (filePath != null && File.Exists(filePath))
         {
-            SetStatus($"Downloaded {mod.Name}. Installing...", true);
-
             // Auto-install if a game is loaded
             if (_engine != null)
             {
-                await InstallModFromPath(filePath);
+                // 1. Check if we already have this mod installed (by Nexus ID)
+                var existingMod = InstalledMods.FirstOrDefault(m => m.Manifest.Metadata.NexusId == mod.ModId);
+
+                string statusMsg;
+                InstallResult result;
+                string modsDir = Path.Combine(_gameRoot, "Mods");
+                Directory.CreateDirectory(modsDir);
+
+                if (existingMod != null)
+                {
+                    // CASE A: UPDATE
+                    // We found the mod! Update it in the SAME folder.
+                    statusMsg = $"Updating {mod.Name} (v{mod.Version})...";
+                    SetStatus(statusMsg, true);
+
+                    result = await System.Threading.Tasks.Task.Run(() =>
+                        _installer.InstallModWithNexusInfo(
+                            filePath,
+                            modsDir,
+                            mod.ModId,
+                            mod.Version,
+                            existingMod.FolderName // <--- FORCE OVERWRITE of existing folder
+                        ));
+                }
+                else
+                {
+                    // CASE B: NEW INSTALL
+                    statusMsg = $"Installing {mod.Name} (v{mod.Version})...";
+                    SetStatus(statusMsg, true);
+
+                    result = await System.Threading.Tasks.Task.Run(() =>
+                        _installer.InstallModWithNexusInfo(
+                            filePath,
+                            modsDir,
+                            mod.ModId,
+                            mod.Version
+                            // No folder name passed -> Installer will generate one
+                        ));
+                }
+
+                // 2. Handle Success/Failure
+                if (result.Success && result.FolderName != null)
+                {
+                    // Auto-enable if it's a new install (optional, but good UX)
+                    if (!_profile.EnabledMods.Contains(result.FolderName))
+                    {
+                        _profile.EnabledMods.Add(result.FolderName);
+                        SaveProfile();
+                    }
+
+                    // Refresh UI
+                    RefreshModList();
+                    MarkPendingChanges();
+                    SetStatus($"✓ {statusMsg.Replace("...", "")} Complete!", true);
+                }
+                else
+                {
+                    SetStatus($"Installation failed: {result.Error}", false);
+                }
             }
             else
             {

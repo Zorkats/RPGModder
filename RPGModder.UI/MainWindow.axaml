@@ -281,8 +281,16 @@
                             <TextBox Name="TxtVanillaFolder" Grid.Column="1" IsReadOnly="True"
                                      Watermark="Select clean, unmodified game folder..."
                                      Background="#252526" Foreground="#DDD"
-                                     BorderThickness="1" BorderBrush="#333" CornerRadius="4" Margin="0,0,10,0"/>
-                            <Button Name="BtnBrowseVanilla" Grid.Column="2" Content="Browse"/>
+                                     BorderThickness="1" BorderBrush="#333" CornerRadius="4" Margin="0,0,10,0">
+                                <ToolTip.Tip>
+                                    <StackPanel>
+                                        <TextBlock Text="⚠️ IMPORTANT: This folder must be 100% clean!" FontWeight="Bold" Foreground="#FF5555"/>
+                                        <TextBlock Text="If this folder contains mods, the Auto-Packer will produce bad results."/>
+                                        <TextBlock Text="Tip: If you have a game loaded, we will auto-use the Safe Backup." FontStyle="Italic"/>
+                                    </StackPanel>
+                                </ToolTip.Tip>
+                            </TextBox>
+                            <Button Name="BtnBrowseVanilla" Grid.Column="2" Content="Browse / Auto"/>
                         </Grid>
 
                         <Button Name="BtnAnalyze" Content="🔍 Analyze Differences" HorizontalAlignment="Left" Margin="0,5,0,0"/>
@@ -326,10 +334,19 @@
                             </Border>
 
                             <ScrollViewer Grid.Row="1" MaxHeight="200">
-                                <ListBox Name="LstChanges" Background="Transparent" Foreground="#DDD"
-                                         Padding="5">
+                                <ListBox Name="LstChanges" Grid.Row="1" Background="Transparent" Foreground="#DDD" Padding="5">
+                                    <ListBox.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Remove from Package" Click="CtxRemoveChange_Click">
+                                                <MenuItem.Icon>
+                                                    <TextBlock Text="❌"/>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                        </ContextMenu>
+                                    </ListBox.ContextMenu>
+
                                     <ListBox.ItemTemplate>
-                                        <DataTemplate x:DataType="models:ChangeItem">
+                                        <DataTemplate DataType="models:ChangeItem">
                                             <Grid ColumnDefinitions="Auto, *, Auto">
                                                 <Border Background="{Binding Color}" CornerRadius="3" Padding="6,2" Margin="0,0,8,0">
                                                     <TextBlock Text="{Binding Type}" FontSize="10" FontWeight="Bold" Foreground="White"/>
@@ -649,7 +666,7 @@
                         VerticalAlignment="Center" Margin="0,0,10,0"/>
                 <TextBlock Name="TxtStatus" Text="Ready. Select a game to begin." Foreground="#AAA" FontSize="12" 
                            VerticalAlignment="Center" Grid.Column="1"/>
-                <TextBlock Text="v2.0.0" Foreground="#555" Grid.Column="2" FontSize="11" VerticalAlignment="Center"/>
+                <TextBlock Text="v1.0.0" Foreground="#555" Grid.Column="2" FontSize="11" VerticalAlignment="Center"/>
             </Grid>
         </Border>
     </Grid>

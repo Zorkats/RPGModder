@@ -7,24 +7,54 @@ namespace RPGModder.Core.Services;
 // Handles mod installation from folders and ZIP files
 public class ModInstallerService
 {
+
+    public InstallResult InstallModWithNexusInfo(
+        string sourcePath,
+        string modsDirectory,
+        int nexusId,
+        string version,
+        string existingFolderName = null)
+    {
+        // 1. Install normally first to unpack everything
+        var result = InstallMod(sourcePath, modsDirectory, existingFolderName);
+
+        if (result.Success && result.Manifest != null && !string.IsNullOrEmpty(result.FolderName))
+        {
+            // 2. Inject Nexus Metadata
+            result.Manifest.Metadata.NexusId = nexusId;
+            // Only update version if the mod doesn't have its own specific version string
+            if (string.IsNullOrEmpty(result.Manifest.Metadata.Version) || result.Manifest.Metadata.Version == "1.0")
+            {
+                result.Manifest.Metadata.Version = version;
+            }
+
+            // 3. Save the updated mod.json back to disk
+            string installedPath = Path.Combine(modsDirectory, result.FolderName, "mod.json");
+            File.WriteAllText(installedPath,
+                JsonConvert.SerializeObject(result.Manifest, Formatting.Indented));
+        }
+
+        return result;
+    }
+
     // Installs a mod from a folder or ZIP file to the target mods directory
     // Returns the installed mod's folder name, or null if installation failed
-    public InstallResult InstallMod(string sourcePath, string modsDirectory)
+    public InstallResult InstallMod(string sourcePath, string modsDirectory, string? targetFolderName = null)
     {
         if (File.Exists(sourcePath) && sourcePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
         {
-            return InstallFromZip(sourcePath, modsDirectory);
+            return InstallFromZip(sourcePath, modsDirectory, targetFolderName);
         }
         else if (Directory.Exists(sourcePath))
         {
-            return InstallFromFolder(sourcePath, modsDirectory);
+            return InstallFromFolder(sourcePath, modsDirectory, targetFolderName);
         }
 
-        return new InstallResult { Success = false, Error = "Path is neither a valid folder nor a ZIP file." };
+        return new InstallResult { Success = false, Error = "Invalid path." };
     }
 
     // Installs from a ZIP file - extracts and finds mod.json
-    private InstallResult InstallFromZip(string zipPath, string modsDirectory)
+    private InstallResult InstallFromZip(string zipPath, string modsDirectory, string? targetFolderName)
     {
         string tempDir = Path.Combine(Path.GetTempPath(), $"RPGModder_Extract_{Guid.NewGuid():N}");
 
@@ -42,7 +72,7 @@ public class ModInstallerService
 
             // The mod root is the folder containing mod.json
             string modRoot = Path.GetDirectoryName(modJsonPath)!;
-            return InstallFromFolder(modRoot, modsDirectory);
+            return InstallFromFolder(modRoot, modsDirectory, targetFolderName);
         }
         catch (Exception ex)
         {
@@ -57,7 +87,7 @@ public class ModInstallerService
     }
 
     // Installs from a folder - copies to mods directory
-    private InstallResult InstallFromFolder(string folderPath, string modsDirectory)
+    private InstallResult InstallFromFolder(string folderPath, string modsDirectory, string? targetFolderName)
     {
         // First check if mod.json exists directly in the folder
         string directModJson = Path.Combine(folderPath, "mod.json");
@@ -83,26 +113,32 @@ public class ModInstallerService
         try
         {
             var manifest = JsonConvert.DeserializeObject<ModManifest>(File.ReadAllText(modJsonPath));
-            if (manifest == null)
+            if (manifest == null) return new InstallResult { Success = false, Error = "Failed to parse mod.json" };
+
+            // Determine folder name
+            string folderName;
+
+            if (!string.IsNullOrEmpty(targetFolderName))
             {
-                return new InstallResult { Success = false, Error = "Failed to parse mod.json." };
+                // Use the existing folder name
+                folderName = targetFolderName;
             }
+            else
+            {
+                // NEW INSTALL: Use ID or Folder Name
+                folderName = !string.IsNullOrWhiteSpace(manifest.Metadata.Id)
+                    ? manifest.Metadata.Id
+                    : new DirectoryInfo(folderPath).Name;
 
-            // Determine target folder name
-            string folderName = !string.IsNullOrWhiteSpace(manifest.Metadata.Id)
-                ? manifest.Metadata.Id
-                : new DirectoryInfo(folderPath).Name;
-
-            if (string.IsNullOrWhiteSpace(folderName))
-                folderName = $"Mod_{DateTime.Now.Ticks}";
+                if (string.IsNullOrWhiteSpace(folderName)) folderName = $"Mod_{DateTime.Now.Ticks}";
+            }
 
             string targetPath = Path.Combine(modsDirectory, folderName);
 
-            // Remove existing if present
+            // Nuke existing folder (Update logic)
             if (Directory.Exists(targetPath))
                 Directory.Delete(targetPath, true);
 
-            // Copy mod folder
             CopyDirectory(folderPath, targetPath);
 
             return new InstallResult
@@ -114,7 +150,7 @@ public class ModInstallerService
         }
         catch (Exception ex)
         {
-            return new InstallResult { Success = false, Error = $"Installation failed: {ex.Message}" };
+            return new InstallResult { Success = false, Error = ex.Message };
         }
     }
 

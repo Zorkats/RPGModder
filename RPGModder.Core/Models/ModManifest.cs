@@ -33,6 +33,9 @@ public class ModMetadata
     [JsonProperty("id")]
     public string Id { get; set; } = "";
 
+    [JsonProperty("nexus_id")]
+    public int? NexusId { get; set; }
+
     [JsonProperty("description")]
     public string Description { get; set; } = "";
 }

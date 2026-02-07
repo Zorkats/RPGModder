@@ -12,6 +12,10 @@ public class ModEngine
     private readonly string _modsRootPath;
     private readonly bool _usesWwwFolder;     // True for nw.js packaged games
     private readonly JsonMergeService _merger = new();
+    private readonly string[] _protectedFolders = new[]
+    {
+        "data", "js", "img", "audio", "fonts", "css", "icon", "movies", "effects"
+    };
 
     // Enable/disable smart merging (can be toggled in settings)
     public bool UseMerging { get; set; } = true;
@@ -35,6 +39,8 @@ public class ModEngine
         // This is where users should drag their mods into
         _modsRootPath = Path.Combine(_gamePath, "Mods");
 
+
+
         if (!Directory.Exists(_backupPath)) Directory.CreateDirectory(_backupPath);
         if (!Directory.Exists(_modsRootPath)) Directory.CreateDirectory(_modsRootPath);
     }
@@ -50,22 +56,23 @@ public class ModEngine
         if (File.Exists(markerFile)) return; // Already backed up
 
         // Backup content folders from the correct location
-        string dataPath = Path.Combine(_contentPath, "data");
-        string jsPath = Path.Combine(_contentPath, "js");
-
-        if (Directory.Exists(dataPath))
-            CopyDirectory(dataPath, Path.Combine(_backupPath, "data"));
-
-        if (Directory.Exists(jsPath))
-            CopyDirectory(jsPath, Path.Combine(_backupPath, "js"));
+        foreach (var folder in _protectedFolders)
+        {
+            string sourcePath = Path.Combine(_contentPath, folder);
+            if (Directory.Exists(sourcePath))
+            {
+                CopyDirectory(sourcePath, Path.Combine(_backupPath, folder));
+            }
+        }
 
         // Save structure info
         File.WriteAllText(markerFile, JsonConvert.SerializeObject(new
         {
             BackupDate = DateTime.Now,
             UsesWwwFolder = _usesWwwFolder,
-            ContentPath = _contentPath
-        }));
+            ContentPath = _contentPath,
+            ProtectedFolders = _protectedFolders
+        }, Formatting.Indented));
     }
 
     public void RebuildGame(ModProfile profile)
@@ -73,8 +80,10 @@ public class ModEngine
         LastMergeReports.Clear();
 
         // 1. RESTORE VANILLA
-        RestoreFolder("data");
-        RestoreFolder("js");
+        foreach (var folder in _protectedFolders)
+        {
+            SmartRestoreFolder(folder);
+        }
 
         if (UseMerging)
         {
@@ -403,5 +412,68 @@ public class ModEngine
                 File.WriteAllText(fullPath, newFileContent);
             }
         }
+    }
+    private void SmartRestoreFolder(string folderName)
+    {
+        string backupDir = Path.Combine(_backupPath, folderName);
+        string gameDir = Path.Combine(_contentPath, folderName);
+
+        if (!Directory.Exists(backupDir)) return;
+        if (!Directory.Exists(gameDir)) Directory.CreateDirectory(gameDir);
+
+        // 1. Restore missing/altered files from Backup -> Game
+        foreach (var backupFile in Directory.GetFiles(backupDir, "*", SearchOption.AllDirectories))
+        {
+            string relativePath = Path.GetRelativePath(backupDir, backupFile);
+            string gameFile = Path.Combine(gameDir, relativePath);
+
+            if (!File.Exists(gameFile) || !FilesAreEqual(backupFile, gameFile))
+            {
+                // File is missing or modified -> Restore vanilla
+                string? dir = Path.GetDirectoryName(gameFile);
+                if (dir != null) Directory.CreateDirectory(dir);
+                File.Copy(backupFile, gameFile, true);
+            }
+        }
+
+        // 2. Remove leftover mod files (files in Game but NOT in Backup)
+        foreach (var gameFile in Directory.GetFiles(gameDir, "*", SearchOption.AllDirectories))
+        {
+            string relativePath = Path.GetRelativePath(gameDir, gameFile);
+            string backupFile = Path.Combine(backupDir, relativePath);
+
+            if (!File.Exists(backupFile))
+            {
+                File.Delete(gameFile);
+            }
+        }
+
+        // Cleanup empty directories
+        DeleteEmptyDirs(gameDir);
+    }
+
+    private bool FilesAreEqual(string path1, string path2)
+    {
+        var info1 = new FileInfo(path1);
+        var info2 = new FileInfo(path2);
+
+        // Fast check: Size
+        return info1.Length == info2.Length;
+    }
+
+    private void DeleteEmptyDirs(string startDir)
+    {
+        try
+        {
+            foreach (var d in Directory.GetDirectories(startDir))
+            {
+                DeleteEmptyDirs(d);
+                if (!Directory.EnumerateFileSystemEntries(d).Any())
+                {
+                    Directory.Delete(d, false);
+                }
+            }
+        }
+        catch { }
     }
 }
