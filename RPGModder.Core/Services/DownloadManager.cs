@@ -2,9 +2,7 @@ using System.Collections.Concurrent;
 
 namespace RPGModder.Core.Services;
 
-/// <summary>
-/// Manages mod downloads with progress tracking and queue support
-/// </summary>
+// Manages mod downloads with progress tracking and queue support
 public class DownloadManager : IDisposable
 {
     private readonly HttpClient _http;
@@ -33,9 +31,7 @@ public class DownloadManager : IDisposable
             Directory.CreateDirectory(_downloadFolder);
     }
 
-    /// <summary>
-    /// Queues a download from a Nexus download link
-    /// </summary>
+    // Queues a download from a Nexus download link
     public async Task<DownloadItem> QueueDownloadAsync(
         string downloadUrl, 
         string fileName, 
@@ -64,7 +60,15 @@ public class DownloadManager : IDisposable
 
     private async Task ProcessDownloadAsync(DownloadItem item)
     {
-        await _downloadSemaphore.WaitAsync();
+        try
+        {
+            await _downloadSemaphore.WaitAsync(item.CancelToken);
+        }
+        catch (OperationCanceledException)
+        {
+            item.Status = DownloadStatus.Cancelled;
+            return;
+        }
 
         try
         {
@@ -72,14 +76,23 @@ public class DownloadManager : IDisposable
             item.StartedAt = DateTime.Now;
             DownloadStarted?.Invoke(item);
 
-            using var response = await _http.GetAsync(item.Url, HttpCompletionOption.ResponseHeadersRead);
+            using var response = await _http.GetAsync(item.Url, HttpCompletionOption.ResponseHeadersRead, item.CancelToken);
             response.EnsureSuccessStatusCode();
+
+            // Resolve the real filename from Content-Disposition header or URL
+            // This fixes the NXM flow where only mod name (no extension) is passed
+            string resolvedFileName = ResolveFileName(response, item.FileName);
+            if (resolvedFileName != item.FileName)
+            {
+                item.FileName = resolvedFileName;
+                item.DestinationPath = Path.Combine(_downloadFolder, resolvedFileName);
+            }
 
             item.TotalBytes = response.Content.Headers.ContentLength ?? 0;
 
             var tempPath = item.DestinationPath + ".downloading";
 
-            using (var contentStream = await response.Content.ReadAsStreamAsync())
+            using (var contentStream = await response.Content.ReadAsStreamAsync(item.CancelToken))
             using (var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true))
             {
                 var buffer = new byte[8192];
@@ -87,9 +100,9 @@ public class DownloadManager : IDisposable
                 int bytesRead;
                 var lastProgressUpdate = DateTime.Now;
 
-                while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length, item.CancelToken)) > 0)
                 {
-                    await fileStream.WriteAsync(buffer, 0, bytesRead);
+                    await fileStream.WriteAsync(buffer, 0, bytesRead, item.CancelToken);
                     totalRead += bytesRead;
                     item.DownloadedBytes = totalRead;
 
@@ -115,6 +128,11 @@ public class DownloadManager : IDisposable
             item.Progress = 100;
             DownloadCompleted?.Invoke(item);
         }
+        catch (OperationCanceledException)
+        {
+            item.Status = DownloadStatus.Cancelled;
+            CleanupTempFile(item);
+        }
         catch (Exception ex)
         {
             item.Status = DownloadStatus.Failed;
@@ -127,35 +145,33 @@ public class DownloadManager : IDisposable
         }
     }
 
-    /// <summary>
-    /// Cancels a download
-    /// </summary>
+    // Cancels a download
     public void CancelDownload(string downloadId)
     {
         if (_downloads.TryGetValue(downloadId, out var item))
         {
+            item.Cts.Cancel();
             item.Status = DownloadStatus.Cancelled;
-            
-            // Clean up temp file
-            var tempPath = item.DestinationPath + ".downloading";
-            if (File.Exists(tempPath))
-            {
-                try { File.Delete(tempPath); } catch { }
-            }
+            CleanupTempFile(item);
         }
     }
 
-    /// <summary>
-    /// Removes a download from the list
-    /// </summary>
+    private static void CleanupTempFile(DownloadItem item)
+    {
+        var tempPath = item.DestinationPath + ".downloading";
+        if (File.Exists(tempPath))
+        {
+            try { File.Delete(tempPath); } catch { }
+        }
+    }
+
+    // Removes a download from the list
     public void RemoveDownload(string downloadId)
     {
         _downloads.TryRemove(downloadId, out _);
     }
 
-    /// <summary>
-    /// Clears completed downloads from the list
-    /// </summary>
+    // Clears completed downloads from the list
     public void ClearCompleted()
     {
         var completed = _downloads.Values.Where(d => 
@@ -170,15 +186,54 @@ public class DownloadManager : IDisposable
         }
     }
 
-    /// <summary>
-    /// Gets the download folder path
-    /// </summary>
+    // Gets the download folder path
     public string GetDownloadFolder() => _downloadFolder;
 
     private string SanitizeFileName(string fileName)
     {
         var invalid = Path.GetInvalidFileNameChars();
         return string.Join("_", fileName.Split(invalid, StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    // Extracts the real filename from HTTP response headers or URL.
+    // Falls back to the original name with .zip appended if no extension is found.
+    private string ResolveFileName(HttpResponseMessage response, string fallbackName)
+    {
+        string? resolved = null;
+
+        // Try Content-Disposition header first (most reliable)
+        var contentDisposition = response.Content.Headers.ContentDisposition;
+        if (contentDisposition?.FileName != null)
+        {
+            resolved = contentDisposition.FileName.Trim('"', ' ');
+        }
+        else if (contentDisposition?.FileNameStar != null)
+        {
+            resolved = contentDisposition.FileNameStar.Trim('"', ' ');
+        }
+
+        // Try the URL path as second option
+        if (string.IsNullOrEmpty(resolved))
+        {
+            try
+            {
+                var uri = new Uri(response.RequestMessage?.RequestUri?.ToString() ?? "");
+                var urlFileName = Path.GetFileName(uri.LocalPath);
+                if (!string.IsNullOrEmpty(urlFileName) && urlFileName.Contains('.'))
+                    resolved = urlFileName;
+            }
+            catch { }
+        }
+
+        // If we got a real name, sanitize and return it
+        if (!string.IsNullOrEmpty(resolved))
+            return SanitizeFileName(resolved);
+
+        // Fallback: if the original name has no extension, append .zip
+        if (!Path.HasExtension(fallbackName))
+            return SanitizeFileName(fallbackName + ".zip");
+
+        return SanitizeFileName(fallbackName);
     }
 
     public void Dispose()
@@ -203,6 +258,10 @@ public class DownloadItem
     public DateTime QueuedAt { get; set; }
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
+
+    // Cancellation support
+    public CancellationTokenSource Cts { get; set; } = new();
+    public CancellationToken CancelToken => Cts.Token;
 
     // Associated mod info
     public NexusMod? ModInfo { get; set; }

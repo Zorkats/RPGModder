@@ -5,15 +5,11 @@ using System.IO;
 
 namespace RPGModder.Core.Services;
 
-/// <summary>
-/// Provides compatibility with Mattie's Fear and Hunger Mod Manager (FHMM)
-/// https://github.com/mattieFM/FearAndHungerModManager
-/// </summary>
+// Provides compatibility with Mattie's Fear and Hunger Mod Manager (FHMM)
+// https://github.com/mattieFM/FearAndHungerModManager
 public class FhmmCompatibilityService
 {
-    /// <summary>
-    /// Check if FHMM is installed in a game directory
-    /// </summary>
+    // Check if FHMM is installed in a game directory
     public bool IsFhmmInstalled(string gameRoot)
     {
         // FHMM installs to www/mods/ and modifies index.html
@@ -36,17 +32,13 @@ public class FhmmCompatibilityService
         return Directory.Exists(commonLibs);
     }
     
-    /// <summary>
-    /// Get the FHMM mods directory for a game
-    /// </summary>
+    // Get the FHMM mods directory for a game
     public string GetFhmmModsDirectory(string gameRoot)
     {
         return Path.Combine(gameRoot, "www", "mods");
     }
     
-    /// <summary>
-    /// Generate FHMM-compatible mod config JSON
-    /// </summary>
+    // Generate FHMM-compatible mod config JSON
     public FhmmModConfig GenerateFhmmConfig(string modName, bool isDangerous = false, Dictionary<string, object>? parameters = null)
     {
         return new FhmmModConfig
@@ -59,9 +51,7 @@ public class FhmmCompatibilityService
         };
     }
     
-    /// <summary>
-    /// Write FHMM config file for a mod
-    /// </summary>
+    // Write FHMM config file for a mod
     public void WriteFhmmConfig(string modFolder, FhmmModConfig config)
     {
         var configPath = Path.Combine(modFolder, $"{config.Name}.json");
@@ -69,9 +59,7 @@ public class FhmmCompatibilityService
         File.WriteAllText(configPath, json);
     }
     
-    /// <summary>
-    /// Read existing FHMM mods from a game directory
-    /// </summary>
+    // Read existing FHMM mods from a game directory
     public List<FhmmMod> GetInstalledFhmmMods(string gameRoot)
     {
         var mods = new List<FhmmMod>();
@@ -106,9 +94,7 @@ public class FhmmCompatibilityService
         return mods;
     }
     
-    /// <summary>
-    /// Check if a mod name suggests it might affect save files
-    /// </summary>
+    // Check if a mod name suggests it might affect save files
     public bool IsPotentiallyDangerous(string modName, IEnumerable<string> modifiedFiles)
     {
         // Mods that modify certain files are considered dangerous for saves
@@ -136,9 +122,7 @@ public class FhmmCompatibilityService
     }
 }
 
-/// <summary>
-/// FHMM mod configuration format
-/// </summary>
+// FHMM mod configuration format
 public class FhmmModConfig
 {
     [JsonProperty("name")]
@@ -157,9 +141,7 @@ public class FhmmModConfig
     public List<string> Dependencies { get; set; } = new();
 }
 
-/// <summary>
-/// Represents an installed FHMM mod
-/// </summary>
+// Represents an installed FHMM mod
 public class FhmmMod
 {
     public FhmmModConfig Config { get; set; } = new();

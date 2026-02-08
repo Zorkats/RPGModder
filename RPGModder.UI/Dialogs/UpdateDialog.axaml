@@ -1,33 +1,48 @@
-﻿<Window xmlns="https://github.com/avaloniaui"
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="RPGModder.UI.Dialogs.UpdateDialog"
-        Title="Update Available" Width="450" SizeToContent="Height"
-        WindowStartupLocation="CenterOwner"
+        Title="Update Available" Width="520" Height="460"
+        WindowStartupLocation="CenterOwner" CanResize="False"
         Background="#1E1E1E" ExtendClientAreaToDecorationsHint="True">
 
     <Border BorderBrush="#444" BorderThickness="1">
-        <StackPanel Margin="20" Spacing="15">
-            <StackPanel Orientation="Horizontal" Spacing="10">
+        <DockPanel Margin="20">
+
+            <!-- Header -->
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="10" Margin="0,0,0,12">
                 <TextBlock Text="🚀" FontSize="24" VerticalAlignment="Center"/>
                 <StackPanel>
                     <TextBlock Text="New Version Available!" FontWeight="Bold" FontSize="16" Foreground="White"/>
-                    <TextBlock Name="TxtVersion" Text="v1.1.0 is ready to download" Foreground="#AAA"/>
+                    <TextBlock Name="TxtVersion" Text="v1.1.0 is ready to download" Foreground="#AAA" FontSize="12"/>
                 </StackPanel>
             </StackPanel>
 
-            <Border Background="#252526" CornerRadius="4" Padding="10" MaxHeight="150">
-                <ScrollViewer>
-                    <TextBlock Name="TxtReleaseNotes" TextWrapping="Wrap" Foreground="#CCC" FontFamily="Consolas"/>
+            <!-- Changelog label -->
+            <TextBlock DockPanel.Dock="Top" Text="Changelog:" Foreground="#888" FontSize="11"
+                       Margin="0,0,0,4" FontWeight="SemiBold"/>
+
+            <!-- Changelog body — takes all remaining space -->
+            <Border DockPanel.Dock="Top" Background="#252526" CornerRadius="4" Padding="12"
+                    Margin="0,0,0,12" MinHeight="200">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                    <TextBlock Name="TxtReleaseNotes" TextWrapping="Wrap" Foreground="#CCC"
+                               FontFamily="Consolas" FontSize="12" LineHeight="18"/>
                 </ScrollViewer>
             </Border>
 
-            <ProgressBar Name="PrgDownload" Height="4" IsVisible="False"/>
-            <TextBlock Name="TxtStatus" Text="" FontSize="11" Foreground="#888" HorizontalAlignment="Center"/>
+            <!-- Progress + status -->
+            <ProgressBar Name="PrgDownload" DockPanel.Dock="Top" Height="4" IsVisible="False" Margin="0,0,0,4"/>
+            <TextBlock Name="TxtStatus" DockPanel.Dock="Top" Text="" FontSize="11"
+                       Foreground="#888" HorizontalAlignment="Center" Margin="0,0,0,10"/>
 
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-                <Button Name="BtnSkip" Content="Skip" Click="BtnSkip_Click"/>
-                <Button Name="BtnUpdate" Content="Update Now" Classes="primary" Click="BtnUpdate_Click"/>
+            <!-- Buttons -->
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                <Button Name="BtnSkip" Content="Skip" Click="BtnSkip_Click"
+                        Background="#333" Foreground="#CCC" Padding="16,6"/>
+                <Button Name="BtnUpdate" Content="Update Now" Click="BtnUpdate_Click"
+                        Background="#4EC9B0" Foreground="#1E1E1E" FontWeight="SemiBold" Padding="16,6"/>
             </StackPanel>
-        </StackPanel>
+
+        </DockPanel>
     </Border>
 </Window>

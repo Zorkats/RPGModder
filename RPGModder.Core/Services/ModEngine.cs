@@ -146,32 +146,61 @@ public class ModEngine
         if (!Directory.Exists(oldStorage)) Directory.CreateDirectory(oldStorage);
         if (!Directory.Exists(newStorage)) Directory.CreateDirectory(newStorage);
 
-        // 2. BACKUP: Live -> Old Profile Storage
-        // Identify valid save files to backup
+        // Identify valid save files
         var extensions = new[] { ".rpgsave", ".rmmzsave", "config.rpgsave", "global.rpgsave" };
         var liveFiles = Directory.GetFiles(liveSavePath)
             .Where(f => extensions.Any(ext => f.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
             .ToList();
 
-        foreach (var file in liveFiles)
-        {
-            string fileName = Path.GetFileName(file);
-            File.Copy(file, Path.Combine(oldStorage, fileName), true);
-        }
+        // SAFE SWAP PATTERN: use a temp staging area so a crash at any point is recoverable.
+        //
+        // Step 1: Copy live saves → old profile storage (backup current state)
+        // Step 2: Copy new profile saves → temp staging directory
+        // Step 3: Only after staging is fully written, swap live saves with staged saves
+        //
+        // If we crash during step 1-2, live saves are still intact.
+        // If we crash during step 3, the staging dir has the complete set for recovery.
 
-        // 3. WIPE: Clear Live Folder
-        // Only delete the save files we identified to avoid deleting steam_api.dll etc.
-        foreach (var file in liveFiles)
-        {
-            File.Delete(file);
-        }
+        string stagingDir = Path.Combine(storageRoot, $"_swap_staging_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(stagingDir);
 
-        // 4. RESTORE: New Profile Storage -> Live
-        foreach (var file in Directory.GetFiles(newStorage))
+        try
         {
-            string fileName = Path.GetFileName(file);
-            string dest = Path.Combine(liveSavePath, fileName);
-            File.Copy(file, dest, true);
+            // Step 1: BACKUP live → old profile storage
+            foreach (var file in liveFiles)
+            {
+                string fileName = Path.GetFileName(file);
+                File.Copy(file, Path.Combine(oldStorage, fileName), true);
+            }
+
+            // Step 2: STAGE new profile saves into temp directory
+            if (Directory.Exists(newStorage))
+            {
+                foreach (var file in Directory.GetFiles(newStorage))
+                {
+                    string fileName = Path.GetFileName(file);
+                    File.Copy(file, Path.Combine(stagingDir, fileName), true);
+                }
+            }
+
+            // Step 3: SWAP — delete live saves, move staged files in
+            foreach (var file in liveFiles)
+            {
+                File.Delete(file);
+            }
+
+            foreach (var file in Directory.GetFiles(stagingDir))
+            {
+                string fileName = Path.GetFileName(file);
+                string dest = Path.Combine(liveSavePath, fileName);
+                File.Move(file, dest, true);
+            }
+        }
+        finally
+        {
+            // Cleanup staging directory (safe even if swap failed — originals in oldStorage)
+            try { if (Directory.Exists(stagingDir)) Directory.Delete(stagingDir, true); }
+            catch { }
         }
     }
 
@@ -600,24 +629,32 @@ public class ModEngine
         // 1. Fast check: Size
         if (info1.Length != info2.Length) return false;
 
-        // 2. Robust check: Content
-        // If file is < 10MB, compare bytes to ensure identical content
-        if (info1.Length < 10 * 1024 * 1024)
+        try
         {
-            try
+            // 2. Small files (<10MB): byte-level comparison
+            if (info1.Length < 10 * 1024 * 1024)
             {
                 byte[] file1 = File.ReadAllBytes(path1);
                 byte[] file2 = File.ReadAllBytes(path2);
                 return file1.SequenceEqual(file2);
             }
-            catch
-            {
-                // If we can't read (locked?), assume different to be safe
-                return false;
-            }
-        }
 
-        return true;
+            // 3. Large files (>=10MB): SHA-256 hash comparison
+            using var sha = System.Security.Cryptography.SHA256.Create();
+
+            byte[] hash1, hash2;
+            using (var stream1 = File.OpenRead(path1))
+                hash1 = sha.ComputeHash(stream1);
+            using (var stream2 = File.OpenRead(path2))
+                hash2 = sha.ComputeHash(stream2);
+
+            return hash1.SequenceEqual(hash2);
+        }
+        catch
+        {
+            // If we can't read (locked?), assume different to be safe
+            return false;
+        }
     }
 
     private void DeleteEmptyDirs(string startDir)

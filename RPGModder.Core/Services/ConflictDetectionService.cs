@@ -2,14 +2,10 @@ using RPGModder.Core.Models;
 
 namespace RPGModder.Core.Services;
 
-/// <summary>
-/// Detects conflicts between mods (files that multiple mods touch)
-/// </summary>
+// Detects conflicts between mods (files that multiple mods touch)
 public class ConflictDetectionService
 {
-    /// <summary>
-    /// Analyzes all mods and updates their conflict information
-    /// </summary>
+    // Analyzes all mods and updates their conflict information
     public void DetectConflicts(IList<ModListItem> mods)
     {
         // Build a map of file -> list of mods that touch it
@@ -85,9 +81,7 @@ public class ConflictDetectionService
         }
     }
 
-    /// <summary>
-    /// Gets detailed conflict information for display
-    /// </summary>
+    // Gets detailed conflict information for display
     public ConflictReport GenerateReport(IList<ModListItem> mods)
     {
         var report = new ConflictReport();

@@ -4,25 +4,14 @@ using System.Net.Http.Headers;
 
 namespace RPGModder.Core.Services;
 
-/// <summary>
-/// Nexus Mods API client for browsing, downloading, and checking updates.
-/// API Documentation: https://app.swaggerhub.com/apis-docs/NexusMods/nexus-mods_public_api_params_in_form_data/1.0
-/// </summary>
+// Nexus Mods API client for browsing, downloading, and checking updates.
+// API Documentation: https://app.swaggerhub.com/apis-docs/NexusMods/nexus-mods_public_api_params_in_form_data/1.0
 public class NexusApiService : IDisposable
 {
     private readonly HttpClient _http;
     private string? _apiKey;
     private NexusUser? _currentUser;
-
-    // Nexus game domain for RPG Maker games
-    // Note: Nexus doesn't have a dedicated RPG Maker category, mods are usually under specific game names
-    // We'll support searching across multiple game domains
-    public static readonly string[] SupportedGameDomains = new[]
-    {
-        "rpgmakermv",
-        "rpgmakermz", 
-        // Add specific game domains as needed
-    };
+    private readonly object _authLock = new();
 
     public bool IsAuthenticated => !string.IsNullOrEmpty(_apiKey) && _currentUser != null;
     public NexusUser? CurrentUser => _currentUser;
@@ -32,15 +21,17 @@ public class NexusApiService : IDisposable
     {
         _http = new HttpClient
         {
-            BaseAddress = new Uri("https://api.nexusmods.com/v1/")
+            BaseAddress = new Uri("https://api.nexusmods.com/v1/"),
+            Timeout = TimeSpan.FromSeconds(30)
         };
         _http.DefaultRequestHeaders.Add("Application-Name", "RPGModder");
         _http.DefaultRequestHeaders.Add("Application-Version", "1.3.0");
     }
 
-    /// <summary>
-    /// Sets the API key and validates it by fetching user info
-    /// </summary>
+    #region Authentication
+
+    // Sets the API key and validates it by fetching user info.
+    // Thread-safe — guards against concurrent auth attempts.
     public async Task<NexusAuthResult> AuthenticateAsync(string apiKey)
     {
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -48,11 +39,15 @@ public class NexusApiService : IDisposable
 
         try
         {
-            _http.DefaultRequestHeaders.Remove("apikey");
-            _http.DefaultRequestHeaders.Add("apikey", apiKey);
+            lock (_authLock)
+            {
+                // Set header atomically
+                _http.DefaultRequestHeaders.Remove("apikey");
+                _http.DefaultRequestHeaders.Add("apikey", apiKey);
+            }
 
             var response = await _http.GetAsync("users/validate.json");
-            
+
             if (response.IsSuccessStatusCode)
             {
                 var json = await response.Content.ReadAsStringAsync();
@@ -80,23 +75,26 @@ public class NexusApiService : IDisposable
         }
     }
 
-    /// <summary>
-    /// Get latest added mods
-    /// </summary>
-    public async Task<NexusSearchResult> GetLatestModsAsync(string gameDomain)
+    #endregion
+
+    #region Mod List Endpoints (Deduplicated)
+
+    // Core method that all list endpoints delegate to — eliminates code duplication.
+    private async Task<NexusSearchResult> FetchModListAsync(
+        string gameDomain, string endpoint, CancellationToken ct = default)
     {
         if (!IsAuthenticated)
             return new NexusSearchResult { Success = false, Error = "Not authenticated" };
 
         try
         {
-            var response = await _http.GetAsync($"games/{gameDomain}/mods/latest_added.json");
+            var response = await _http.GetAsync($"games/{gameDomain}/mods/{endpoint}", ct);
 
             if (response.IsSuccessStatusCode)
             {
-                var json = await response.Content.ReadAsStringAsync();
+                var json = await response.Content.ReadAsStringAsync(ct);
                 var mods = JsonConvert.DeserializeObject<List<NexusMod>>(json) ?? new();
-                
+
                 // Filter out unavailable/hidden mods
                 mods = mods.Where(m => m.Available && !string.IsNullOrEmpty(m.Name)).ToList();
 
@@ -112,43 +110,9 @@ public class NexusApiService : IDisposable
                 return new NexusSearchResult { Success = false, Error = $"API error: {response.StatusCode}" };
             }
         }
-        catch (Exception ex)
+        catch (OperationCanceledException)
         {
-            return new NexusSearchResult { Success = false, Error = ex.Message };
-        }
-    }
-
-    /// <summary>
-    /// Get latest updated mods
-    /// </summary>
-    public async Task<NexusSearchResult> GetUpdatedModsAsync(string gameDomain)
-    {
-        if (!IsAuthenticated)
-            return new NexusSearchResult { Success = false, Error = "Not authenticated" };
-
-        try
-        {
-            var response = await _http.GetAsync($"games/{gameDomain}/mods/latest_updated.json");
-
-            if (response.IsSuccessStatusCode)
-            {
-                var json = await response.Content.ReadAsStringAsync();
-                var mods = JsonConvert.DeserializeObject<List<NexusMod>>(json) ?? new();
-                
-                // Filter out unavailable/hidden mods
-                mods = mods.Where(m => m.Available && !string.IsNullOrEmpty(m.Name)).ToList();
-
-                return new NexusSearchResult
-                {
-                    Success = true,
-                    Mods = mods,
-                    TotalCount = mods.Count
-                };
-            }
-            else
-            {
-                return new NexusSearchResult { Success = false, Error = $"API error: {response.StatusCode}" };
-            }
+            return new NexusSearchResult { Success = false, Error = "Request cancelled" };
         }
         catch (Exception ex)
         {
@@ -156,49 +120,23 @@ public class NexusApiService : IDisposable
         }
     }
 
-    /// <summary>
-    /// Get trending mods
-    /// </summary>
-    public async Task<NexusSearchResult> GetTrendingModsAsync(string gameDomain)
-    {
-        if (!IsAuthenticated)
-            return new NexusSearchResult { Success = false, Error = "Not authenticated" };
+    public Task<NexusSearchResult> GetLatestModsAsync(string gameDomain, CancellationToken ct = default)
+        => FetchModListAsync(gameDomain, "latest_added.json", ct);
 
-        try
-        {
-            var response = await _http.GetAsync($"games/{gameDomain}/mods/trending.json");
+    public Task<NexusSearchResult> GetUpdatedModsAsync(string gameDomain, CancellationToken ct = default)
+        => FetchModListAsync(gameDomain, "latest_updated.json", ct);
 
-            if (response.IsSuccessStatusCode)
-            {
-                var json = await response.Content.ReadAsStringAsync();
-                var mods = JsonConvert.DeserializeObject<List<NexusMod>>(json) ?? new();
-                
-                // Filter out unavailable/hidden mods
-                mods = mods.Where(m => m.Available && !string.IsNullOrEmpty(m.Name)).ToList();
+    public Task<NexusSearchResult> GetTrendingModsAsync(string gameDomain, CancellationToken ct = default)
+        => FetchModListAsync(gameDomain, "trending.json", ct);
 
-                return new NexusSearchResult
-                {
-                    Success = true,
-                    Mods = mods,
-                    TotalCount = mods.Count
-                };
-            }
-            else
-            {
-                return new NexusSearchResult { Success = false, Error = $"API error: {response.StatusCode}" };
-            }
-        }
-        catch (Exception ex)
-        {
-            return new NexusSearchResult { Success = false, Error = ex.Message };
-        }
-    }
+    #endregion
 
-    /// <summary>
-    /// Get all mods combined from multiple endpoints (latest + trending + updated + monthly)
-    /// This provides more results since each endpoint returns max 10
-    /// </summary>
-    public async Task<NexusSearchResult> GetAllModsCombinedAsync(string gameDomain)
+    #region Combined / Extended Endpoints
+
+    // Get all mods combined from multiple endpoints (latest + trending + updated + monthly).
+    // Provides more results since each endpoint returns max 10.
+    public async Task<NexusSearchResult> GetAllModsCombinedAsync(
+        string gameDomain, CancellationToken ct = default)
     {
         if (!IsAuthenticated)
             return new NexusSearchResult { Success = false, Error = "Not authenticated" };
@@ -207,39 +145,33 @@ public class NexusApiService : IDisposable
         {
             var allMods = new List<NexusMod>();
 
-            // 1. Get Latest Mods
-            var latestResult = await GetLatestModsAsync(gameDomain);
-            if (latestResult.Success)
-                allMods.AddRange(latestResult.Mods);
+            var latestResult = await GetLatestModsAsync(gameDomain, ct);
+            if (latestResult.Success) allMods.AddRange(latestResult.Mods);
 
-            await Task.Delay(100); // Throttle to prevent API Rate Limiting
+            ct.ThrowIfCancellationRequested();
+            await Task.Delay(100, ct); // Throttle
 
-            // 2. Get Trending Mods
-            var trendingResult = await GetTrendingModsAsync(gameDomain);
-            if (trendingResult.Success)
-                allMods.AddRange(trendingResult.Mods);
+            var trendingResult = await GetTrendingModsAsync(gameDomain, ct);
+            if (trendingResult.Success) allMods.AddRange(trendingResult.Mods);
 
-            await Task.Delay(100); // Throttle
+            ct.ThrowIfCancellationRequested();
+            await Task.Delay(100, ct);
 
-            // 3. Get Updated Mods
-            var updatedResult = await GetUpdatedModsAsync(gameDomain);
-            if (updatedResult.Success)
-                allMods.AddRange(updatedResult.Mods);
+            var updatedResult = await GetUpdatedModsAsync(gameDomain, ct);
+            if (updatedResult.Success) allMods.AddRange(updatedResult.Mods);
 
-            await Task.Delay(100); // Throttle
+            ct.ThrowIfCancellationRequested();
+            await Task.Delay(100, ct);
 
-            // 4. Get Monthly Updates (Last 30 days)
-            var monthlyResult = await GetUpdatedModsWithPeriodAsync(gameDomain, "1m");
-            if (monthlyResult.Success)
-                allMods.AddRange(monthlyResult.Mods);
+            var monthlyResult = await GetUpdatedModsWithPeriodAsync(gameDomain, "1m", ct);
+            if (monthlyResult.Success) allMods.AddRange(monthlyResult.Mods);
 
-            // 5. Deduplicate and Filter
-            // We filter out mods that are hidden/unavailable or have no name
+            // Deduplicate, filter, sort
             var uniqueMods = allMods
                 .Where(m => m.Available && !string.IsNullOrEmpty(m.Name))
-                .GroupBy(m => m.ModId) // Group by ID to find duplicates
-                .Select(g => g.First()) // Take the first instance of each ID
-                .OrderByDescending(m => m.Downloads) // Sort by popularity
+                .GroupBy(m => m.ModId)
+                .Select(g => g.First())
+                .OrderByDescending(m => m.Downloads)
                 .ToList();
 
             return new NexusSearchResult
@@ -249,41 +181,49 @@ public class NexusApiService : IDisposable
                 TotalCount = uniqueMods.Count
             };
         }
+        catch (OperationCanceledException)
+        {
+            return new NexusSearchResult { Success = false, Error = "Request cancelled" };
+        }
         catch (Exception ex)
         {
             return new NexusSearchResult { Success = false, Error = ex.Message };
         }
     }
 
-    /// <summary>
-    /// Get mods updated within a specific period (1d, 1w, 1m)
-    /// This returns mod IDs only, need to fetch full details separately
-    /// </summary>
-    public async Task<NexusSearchResult> GetUpdatedModsWithPeriodAsync(string gameDomain, string period = "1m")
+    // Get mods updated within a specific period (1d, 1w, 1m).
+    // Now properly throttled between individual mod fetches.
+    public async Task<NexusSearchResult> GetUpdatedModsWithPeriodAsync(
+        string gameDomain, string period = "1m", CancellationToken ct = default)
     {
         if (!IsAuthenticated)
             return new NexusSearchResult { Success = false, Error = "Not authenticated" };
 
         try
         {
-            var response = await _http.GetAsync($"games/{gameDomain}/mods/updated.json?period={period}");
+            var response = await _http.GetAsync(
+                $"games/{gameDomain}/mods/updated.json?period={period}", ct);
 
             if (response.IsSuccessStatusCode)
             {
-                var json = await response.Content.ReadAsStringAsync();
+                var json = await response.Content.ReadAsStringAsync(ct);
                 var updates = JsonConvert.DeserializeObject<List<NexusModUpdate>>(json) ?? new();
 
-                // Fetch full mod details for each (limited to first 20 to avoid rate limits)
+                // Fetch full mod details — limited to 20 and THROTTLED to avoid rate limits
                 var mods = new List<NexusMod>();
                 var modIds = updates.Take(20).Select(u => u.ModId).Distinct().ToList();
-                
+
                 foreach (var modId in modIds)
                 {
-                    var mod = await GetModAsync(gameDomain, modId);
+                    ct.ThrowIfCancellationRequested();
+
+                    var mod = await GetModAsync(gameDomain, modId, ct);
                     if (mod != null && mod.Available && !string.IsNullOrEmpty(mod.Name))
                     {
                         mods.Add(mod);
                     }
+
+                    await Task.Delay(50, ct); // Throttle between individual fetches
                 }
 
                 return new NexusSearchResult
@@ -298,16 +238,20 @@ public class NexusApiService : IDisposable
                 return new NexusSearchResult { Success = false, Error = $"API error: {response.StatusCode}" };
             }
         }
+        catch (OperationCanceledException)
+        {
+            return new NexusSearchResult { Success = false, Error = "Request cancelled" };
+        }
         catch (Exception ex)
         {
             return new NexusSearchResult { Success = false, Error = ex.Message };
         }
     }
 
-    /// <summary>
-    /// Search for mods - fetches from multiple endpoints and filters
-    /// </summary>
-    public async Task<NexusSearchResult> SearchModsAsync(string gameDomain, string query, int page = 1)
+    // Search for mods — fetches from multiple endpoints and filters client-side.
+    // Sets IsClientSideSearch flag so UI can show "browse on Nexus" hint.
+    public async Task<NexusSearchResult> SearchModsAsync(
+        string gameDomain, string query, int page = 1, CancellationToken ct = default)
     {
         if (!IsAuthenticated)
             return new NexusSearchResult { Success = false, Error = "Not authenticated" };
@@ -315,26 +259,22 @@ public class NexusApiService : IDisposable
         // If no query, return latest mods
         if (string.IsNullOrWhiteSpace(query))
         {
-            return await GetLatestModsAsync(gameDomain);
+            return await GetLatestModsAsync(gameDomain, ct);
         }
 
         try
         {
-            // Fetch from multiple sources and combine
-            var allMods = new List<NexusMod>();
-            
-            var latestTask = GetLatestModsAsync(gameDomain);
-            var updatedTask = GetUpdatedModsAsync(gameDomain);
-            var trendingTask = GetTrendingModsAsync(gameDomain);
+            // Fetch from multiple sources in parallel
+            var latestTask = GetLatestModsAsync(gameDomain, ct);
+            var updatedTask = GetUpdatedModsAsync(gameDomain, ct);
+            var trendingTask = GetTrendingModsAsync(gameDomain, ct);
 
             await Task.WhenAll(latestTask, updatedTask, trendingTask);
 
-            if (latestTask.Result.Success)
-                allMods.AddRange(latestTask.Result.Mods);
-            if (updatedTask.Result.Success)
-                allMods.AddRange(updatedTask.Result.Mods);
-            if (trendingTask.Result.Success)
-                allMods.AddRange(trendingTask.Result.Mods);
+            var allMods = new List<NexusMod>();
+            if (latestTask.Result.Success) allMods.AddRange(latestTask.Result.Mods);
+            if (updatedTask.Result.Success) allMods.AddRange(updatedTask.Result.Mods);
+            if (trendingTask.Result.Success) allMods.AddRange(trendingTask.Result.Mods);
 
             // Remove duplicates and filter by query
             var filteredMods = allMods
@@ -351,8 +291,13 @@ public class NexusApiService : IDisposable
             {
                 Success = true,
                 Mods = filteredMods,
-                TotalCount = filteredMods.Count
+                TotalCount = filteredMods.Count,
+                IsClientSideSearch = true // Signal to UI that results are limited
             };
+        }
+        catch (OperationCanceledException)
+        {
+            return new NexusSearchResult { Success = false, Error = "Request cancelled" };
         }
         catch (Exception ex)
         {
@@ -360,19 +305,22 @@ public class NexusApiService : IDisposable
         }
     }
 
-    /// <summary>
-    /// Get details for a specific mod
-    /// </summary>
-    public async Task<NexusMod?> GetModAsync(string gameDomain, int modId)
+    #endregion
+
+    #region Single Mod / Files / Downloads
+
+    // Get details for a specific mod.
+    public async Task<NexusMod?> GetModAsync(
+        string gameDomain, int modId, CancellationToken ct = default)
     {
         if (!IsAuthenticated) return null;
 
         try
         {
-            var response = await _http.GetAsync($"games/{gameDomain}/mods/{modId}.json");
+            var response = await _http.GetAsync($"games/{gameDomain}/mods/{modId}.json", ct);
             if (response.IsSuccessStatusCode)
             {
-                var json = await response.Content.ReadAsStringAsync();
+                var json = await response.Content.ReadAsStringAsync(ct);
                 return JsonConvert.DeserializeObject<NexusMod>(json);
             }
         }
@@ -380,19 +328,18 @@ public class NexusApiService : IDisposable
         return null;
     }
 
-    /// <summary>
-    /// Get available files for a mod
-    /// </summary>
-    public async Task<List<NexusModFile>> GetModFilesAsync(string gameDomain, int modId)
+    // Get available files for a mod.
+    public async Task<List<NexusModFile>> GetModFilesAsync(
+        string gameDomain, int modId, CancellationToken ct = default)
     {
         if (!IsAuthenticated) return new();
 
         try
         {
-            var response = await _http.GetAsync($"games/{gameDomain}/mods/{modId}/files.json");
+            var response = await _http.GetAsync($"games/{gameDomain}/mods/{modId}/files.json", ct);
             if (response.IsSuccessStatusCode)
             {
-                var json = await response.Content.ReadAsStringAsync();
+                var json = await response.Content.ReadAsStringAsync(ct);
                 var result = JsonConvert.DeserializeObject<NexusFilesResponse>(json);
                 return result?.Files ?? new();
             }
@@ -401,38 +348,31 @@ public class NexusApiService : IDisposable
         return new();
     }
 
-    /// <summary>
-    /// Get download links for a file (requires Premium for direct links)
-    /// </summary>
-    public async Task<List<NexusDownloadLink>> GetDownloadLinksAsync(string gameDomain, int modId, int fileId)
+    // Get download links for a file (requires Premium for direct links).
+    public async Task<List<NexusDownloadLink>> GetDownloadLinksAsync(
+        string gameDomain, int modId, int fileId, CancellationToken ct = default)
     {
         if (!IsAuthenticated) return new();
 
         try
         {
-            var response = await _http.GetAsync($"games/{gameDomain}/mods/{modId}/files/{fileId}/download_link.json");
+            var response = await _http.GetAsync(
+                $"games/{gameDomain}/mods/{modId}/files/{fileId}/download_link.json", ct);
             if (response.IsSuccessStatusCode)
             {
-                var json = await response.Content.ReadAsStringAsync();
+                var json = await response.Content.ReadAsStringAsync(ct);
                 return JsonConvert.DeserializeObject<List<NexusDownloadLink>>(json) ?? new();
             }
-            else if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
-            {
-                // Non-premium users can't get direct download links
-                // They need to use nxm:// protocol or manual download
-                return new();
-            }
+            // Non-premium users get 403 — they need nxm:// protocol
         }
         catch { }
         return new();
     }
 
-    /// <summary>
-    /// Generate download link from nxm:// protocol parameters
-    /// nxm://gameDomain/mods/modId/files/fileId?key=xxx&expires=xxx&user_id=xxx
-    /// </summary>
+    // Generate download link from nxm:// protocol parameters.
     public async Task<List<NexusDownloadLink>> GetDownloadLinksFromNxmAsync(
-        string gameDomain, int modId, int fileId, string key, long expires, int userId)
+        string gameDomain, int modId, int fileId, string key, long expires, int userId,
+        CancellationToken ct = default)
     {
         if (!IsAuthenticated) return new();
 
@@ -440,11 +380,11 @@ public class NexusApiService : IDisposable
         {
             var url = $"games/{gameDomain}/mods/{modId}/files/{fileId}/download_link.json" +
                       $"?key={key}&expires={expires}&user_id={userId}";
-            
-            var response = await _http.GetAsync(url);
+
+            var response = await _http.GetAsync(url, ct);
             if (response.IsSuccessStatusCode)
             {
-                var json = await response.Content.ReadAsStringAsync();
+                var json = await response.Content.ReadAsStringAsync(ct);
                 return JsonConvert.DeserializeObject<List<NexusDownloadLink>>(json) ?? new();
             }
         }
@@ -452,19 +392,76 @@ public class NexusApiService : IDisposable
         return new();
     }
 
-    /// <summary>
-    /// Get list of games on Nexus
-    /// </summary>
-    public async Task<List<NexusGame>> GetGamesAsync()
+    // Download a file from a URL with progress reporting.
+    public async Task<string?> DownloadFileAsync(
+        string downloadUrl, string destinationFolder,
+        IProgress<double>? progress = null, CancellationToken ct = default)
+    {
+        try
+        {
+            Directory.CreateDirectory(destinationFolder);
+
+            using var response = await _http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+            response.EnsureSuccessStatusCode();
+
+            // Get filename from Content-Disposition header or URL
+            string fileName = "download.zip";
+            if (response.Content.Headers.ContentDisposition?.FileName != null)
+            {
+                fileName = response.Content.Headers.ContentDisposition.FileName.Trim('"');
+            }
+            else
+            {
+                var uri = new Uri(downloadUrl);
+                fileName = Path.GetFileName(uri.LocalPath);
+                if (string.IsNullOrEmpty(fileName))
+                    fileName = "download.zip";
+            }
+
+            string filePath = Path.Combine(destinationFolder, fileName);
+            var totalBytes = response.Content.Headers.ContentLength ?? -1L;
+            var downloadedBytes = 0L;
+
+            using var contentStream = await response.Content.ReadAsStreamAsync(ct);
+            using var fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
+
+            var buffer = new byte[8192];
+            int bytesRead;
+
+            while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
+            {
+                await fileStream.WriteAsync(buffer, 0, bytesRead, ct);
+                downloadedBytes += bytesRead;
+
+                if (totalBytes > 0 && progress != null)
+                {
+                    progress.Report((double)downloadedBytes / totalBytes * 100);
+                }
+            }
+
+            return filePath;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    #endregion
+
+    #region Game Search
+
+    // Get list of games on Nexus.
+    public async Task<List<NexusGame>> GetGamesAsync(CancellationToken ct = default)
     {
         if (!IsAuthenticated) return new();
 
         try
         {
-            var response = await _http.GetAsync("games.json");
+            var response = await _http.GetAsync("games.json", ct);
             if (response.IsSuccessStatusCode)
             {
-                var json = await response.Content.ReadAsStringAsync();
+                var json = await response.Content.ReadAsStringAsync(ct);
                 return JsonConvert.DeserializeObject<List<NexusGame>>(json) ?? new();
             }
         }
@@ -472,16 +469,14 @@ public class NexusApiService : IDisposable
         return new();
     }
 
-    /// <summary>
-    /// Search for games on Nexus by name
-    /// </summary>
-    public async Task<List<NexusGame>> SearchGamesAsync(string query)
+    // Search for games on Nexus by name.
+    public async Task<List<NexusGame>> SearchGamesAsync(string query, CancellationToken ct = default)
     {
-        var allGames = await GetGamesAsync();
-        
+        var allGames = await GetGamesAsync(ct);
+
         if (string.IsNullOrWhiteSpace(query))
             return allGames.Where(g => g.ModCount > 0).OrderByDescending(g => g.ModCount).Take(50).ToList();
-        
+
         return allGames
             .Where(g => g.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                         g.DomainName.Contains(query, StringComparison.OrdinalIgnoreCase))
@@ -490,27 +485,49 @@ public class NexusApiService : IDisposable
             .ToList();
     }
 
-    /// <summary>
-    /// Try to find a Nexus game by matching the local game name
-    /// </summary>
-    public async Task<NexusGame?> FindGameByNameAsync(string gameName)
+    // Try to find a Nexus game by matching the local game name.
+    public async Task<NexusGame?> FindGameByNameAsync(string gameName, CancellationToken ct = default)
     {
-        // First check known mappings
         var knownDomain = GetKnownGameDomain(gameName);
         if (knownDomain != null)
         {
-            var games = await GetGamesAsync();
+            var games = await GetGamesAsync(ct);
             return games.FirstOrDefault(g => g.DomainName.Equals(knownDomain, StringComparison.OrdinalIgnoreCase));
         }
-        
-        // Otherwise search
-        var results = await SearchGamesAsync(gameName);
+
+        var results = await SearchGamesAsync(gameName, ct);
         return results.FirstOrDefault();
     }
 
-    /// <summary>
-    /// Known RPG Maker games and their Nexus domains
-    /// </summary>
+    #endregion
+
+    #region Update Check
+
+    // Check for mod updates by comparing versions.
+    public async Task<NexusUpdateCheck> CheckForUpdatesAsync(
+        string gameDomain, int modId, string currentVersion, CancellationToken ct = default)
+    {
+        var mod = await GetModAsync(gameDomain, modId, ct);
+        if (mod == null)
+            return new NexusUpdateCheck { Success = false, Error = "Could not fetch mod info" };
+
+        bool hasUpdate = !string.Equals(mod.Version, currentVersion, StringComparison.OrdinalIgnoreCase);
+
+        return new NexusUpdateCheck
+        {
+            Success = true,
+            HasUpdate = hasUpdate,
+            CurrentVersion = currentVersion,
+            LatestVersion = mod.Version,
+            Mod = mod
+        };
+    }
+
+    #endregion
+
+    #region Known Games Database
+
+    // Known RPG Maker games and their Nexus domains.
     public static readonly Dictionary<string, string> KnownRpgMakerGames = new(StringComparer.OrdinalIgnoreCase)
     {
         // Fear & Hunger series
@@ -564,16 +581,14 @@ public class NexusApiService : IDisposable
         { "Escaped Chasm", "escapedchasm" },
     };
 
-    /// <summary>
-    /// Try to get a known Nexus domain for a game name
-    /// </summary>
+    // Try to get a known Nexus domain for a game name.
     public static string? GetKnownGameDomain(string gameName)
     {
         // Direct lookup
         if (KnownRpgMakerGames.TryGetValue(gameName, out var domain))
             return domain;
-        
-        // Fuzzy match - check if any known game name is contained in the input
+
+        // Fuzzy match
         foreach (var kvp in KnownRpgMakerGames)
         {
             if (gameName.Contains(kvp.Key, StringComparison.OrdinalIgnoreCase) ||
@@ -582,85 +597,11 @@ public class NexusApiService : IDisposable
                 return kvp.Value;
             }
         }
-        
+
         return null;
     }
 
-    /// <summary>
-    /// Check for mod updates by comparing versions
-    /// </summary>
-    public async Task<NexusUpdateCheck> CheckForUpdatesAsync(string gameDomain, int modId, string currentVersion)
-    {
-        var mod = await GetModAsync(gameDomain, modId);
-        if (mod == null)
-            return new NexusUpdateCheck { Success = false, Error = "Could not fetch mod info" };
-
-        bool hasUpdate = !string.Equals(mod.Version, currentVersion, StringComparison.OrdinalIgnoreCase);
-
-        return new NexusUpdateCheck
-        {
-            Success = true,
-            HasUpdate = hasUpdate,
-            CurrentVersion = currentVersion,
-            LatestVersion = mod.Version,
-            Mod = mod
-        };
-    }
-
-    /// <summary>
-    /// Download a file from a URL with progress reporting
-    /// </summary>
-    public async Task<string?> DownloadFileAsync(string downloadUrl, string destinationFolder, IProgress<double>? progress = null)
-    {
-        try
-        {
-            Directory.CreateDirectory(destinationFolder);
-
-            using var response = await _http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
-
-            // Get filename from Content-Disposition header or URL
-            string fileName = "download.zip";
-            if (response.Content.Headers.ContentDisposition?.FileName != null)
-            {
-                fileName = response.Content.Headers.ContentDisposition.FileName.Trim('"');
-            }
-            else
-            {
-                var uri = new Uri(downloadUrl);
-                fileName = Path.GetFileName(uri.LocalPath);
-                if (string.IsNullOrEmpty(fileName))
-                    fileName = "download.zip";
-            }
-
-            string filePath = Path.Combine(destinationFolder, fileName);
-            var totalBytes = response.Content.Headers.ContentLength ?? -1L;
-            var downloadedBytes = 0L;
-
-            using var contentStream = await response.Content.ReadAsStreamAsync();
-            using var fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
-
-            var buffer = new byte[8192];
-            int bytesRead;
-
-            while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
-            {
-                await fileStream.WriteAsync(buffer, 0, bytesRead);
-                downloadedBytes += bytesRead;
-
-                if (totalBytes > 0 && progress != null)
-                {
-                    progress.Report((double)downloadedBytes / totalBytes * 100);
-                }
-            }
-
-            return filePath;
-        }
-        catch
-        {
-            return null;
-        }
-    }
+    #endregion
 
     public void Dispose()
     {
@@ -679,26 +620,13 @@ public class NexusAuthResult
 
 public class NexusUser
 {
-    [JsonProperty("user_id")]
-    public int UserId { get; set; }
-
-    [JsonProperty("key")]
-    public string Key { get; set; } = "";
-
-    [JsonProperty("name")]
-    public string Name { get; set; } = "";
-
-    [JsonProperty("is_premium")]
-    public bool IsPremium { get; set; }
-
-    [JsonProperty("is_supporter")]
-    public bool IsSupporter { get; set; }
-
-    [JsonProperty("email")]
-    public string Email { get; set; } = "";
-
-    [JsonProperty("profile_url")]
-    public string ProfileUrl { get; set; } = "";
+    [JsonProperty("user_id")] public int UserId { get; set; }
+    [JsonProperty("key")] public string Key { get; set; } = "";
+    [JsonProperty("name")] public string Name { get; set; } = "";
+    [JsonProperty("is_premium")] public bool IsPremium { get; set; }
+    [JsonProperty("is_supporter")] public bool IsSupporter { get; set; }
+    [JsonProperty("email")] public string Email { get; set; } = "";
+    [JsonProperty("profile_url")] public string ProfileUrl { get; set; } = "";
 }
 
 public class NexusSearchResult
@@ -707,179 +635,99 @@ public class NexusSearchResult
     public string? Error { get; set; }
     public List<NexusMod> Mods { get; set; } = new();
     public int TotalCount { get; set; }
+
+    // True when results were filtered client-side from cached endpoints
+    // (meaning some matching mods may not appear). UI should show a
+    // "Can't find it? Browse on Nexus" hint.
+    public bool IsClientSideSearch { get; set; }
 }
 
 public class NexusMod
 {
-    [JsonProperty("mod_id")]
-    public int ModId { get; set; }
-
-    [JsonProperty("game_id")]
-    public int GameId { get; set; }
-
-    [JsonProperty("domain_name")]
-    public string DomainName { get; set; } = "";
-
-    [JsonProperty("name")]
-    public string Name { get; set; } = "";
-
-    [JsonProperty("summary")]
-    public string? Summary { get; set; }
-
-    [JsonProperty("description")]
-    public string? Description { get; set; }
-
-    [JsonProperty("version")]
-    public string Version { get; set; } = "";
-
-    [JsonProperty("author")]
-    public string Author { get; set; } = "";
-
-    [JsonProperty("uploaded_by")]
-    public string UploadedBy { get; set; } = "";
-    
-    // Nested user object that some endpoints return
-    [JsonProperty("user")]
-    public NexusModUser? User { get; set; }
-
-    [JsonProperty("picture_url")]
-    public string? PictureUrl { get; set; }
-
-    [JsonProperty("mod_downloads")]
-    public int Downloads { get; set; }
-
-    [JsonProperty("mod_unique_downloads")]
-    public int UniqueDownloads { get; set; }
-
-    [JsonProperty("endorsement_count")]
-    public int Endorsements { get; set; }
-
-    [JsonProperty("created_timestamp")]
-    public long CreatedTimestamp { get; set; }
-
-    [JsonProperty("updated_timestamp")]
-    public long UpdatedTimestamp { get; set; }
-
-    [JsonProperty("available")]
-    public bool Available { get; set; }
+    [JsonProperty("mod_id")] public int ModId { get; set; }
+    [JsonProperty("game_id")] public int GameId { get; set; }
+    [JsonProperty("domain_name")] public string DomainName { get; set; } = "";
+    [JsonProperty("name")] public string Name { get; set; } = "";
+    [JsonProperty("summary")] public string? Summary { get; set; }
+    [JsonProperty("description")] public string? Description { get; set; }
+    [JsonProperty("version")] public string Version { get; set; } = "";
+    [JsonProperty("author")] public string Author { get; set; } = "";
+    [JsonProperty("uploaded_by")] public string UploadedBy { get; set; } = "";
+    [JsonProperty("user")] public NexusModUser? User { get; set; }
+    [JsonProperty("picture_url")] public string? PictureUrl { get; set; }
+    [JsonProperty("mod_downloads")] public int Downloads { get; set; }
+    [JsonProperty("mod_unique_downloads")] public int UniqueDownloads { get; set; }
+    [JsonProperty("endorsement_count")] public int Endorsements { get; set; }
+    [JsonProperty("created_timestamp")] public long CreatedTimestamp { get; set; }
+    [JsonProperty("updated_timestamp")] public long UpdatedTimestamp { get; set; }
+    [JsonProperty("available")] public bool Available { get; set; }
 
     // Convenience properties
-    public DateTime CreatedDate => CreatedTimestamp > 0 
-        ? DateTimeOffset.FromUnixTimeSeconds(CreatedTimestamp).DateTime 
+    public DateTime CreatedDate => CreatedTimestamp > 0
+        ? DateTimeOffset.FromUnixTimeSeconds(CreatedTimestamp).DateTime
         : DateTime.MinValue;
-    public DateTime UpdatedDate => UpdatedTimestamp > 0 
-        ? DateTimeOffset.FromUnixTimeSeconds(UpdatedTimestamp).DateTime 
+    public DateTime UpdatedDate => UpdatedTimestamp > 0
+        ? DateTimeOffset.FromUnixTimeSeconds(UpdatedTimestamp).DateTime
         : DateTime.MinValue;
     public string DownloadsFormatted => Downloads.ToString("N0") + " downloads";
-    
-    // Get author from either author field or nested user object
-    public string AuthorFormatted => !string.IsNullOrEmpty(Author) 
-        ? $"by {Author}" 
-        : (!string.IsNullOrEmpty(UploadedBy) ? $"by {UploadedBy}" 
+
+    public string AuthorFormatted => !string.IsNullOrEmpty(Author)
+        ? $"by {Author}"
+        : (!string.IsNullOrEmpty(UploadedBy) ? $"by {UploadedBy}"
             : (User != null ? $"by {User.Name}" : ""));
     public string VersionFormatted => !string.IsNullOrEmpty(Version) ? $"v{Version}" : "";
 }
 
 public class NexusModUser
 {
-    [JsonProperty("member_id")]
-    public int MemberId { get; set; }
-    
-    [JsonProperty("member_group_id")]
-    public int MemberGroupId { get; set; }
-    
-    [JsonProperty("name")]
-    public string Name { get; set; } = "";
+    [JsonProperty("member_id")] public int MemberId { get; set; }
+    [JsonProperty("member_group_id")] public int MemberGroupId { get; set; }
+    [JsonProperty("name")] public string Name { get; set; } = "";
 }
 
 public class NexusFilesResponse
 {
-    [JsonProperty("files")]
-    public List<NexusModFile> Files { get; set; } = new();
+    [JsonProperty("files")] public List<NexusModFile> Files { get; set; } = new();
 }
 
 public class NexusModFile
 {
-    [JsonProperty("file_id")]
-    public int FileId { get; set; }
+    [JsonProperty("file_id")] public int FileId { get; set; }
+    [JsonProperty("name")] public string Name { get; set; } = "";
+    [JsonProperty("version")] public string Version { get; set; } = "";
+    [JsonProperty("category_id")] public int CategoryId { get; set; }
+    [JsonProperty("category_name")] public string? CategoryName { get; set; }
+    [JsonProperty("is_primary")] public bool IsPrimary { get; set; }
+    [JsonProperty("file_name")] public string FileName { get; set; } = "";
+    [JsonProperty("size")] public long Size { get; set; }
+    [JsonProperty("size_kb")] public long SizeKb { get; set; }
+    [JsonProperty("uploaded_timestamp")] public long UploadedTimestamp { get; set; }
+    [JsonProperty("description")] public string? Description { get; set; }
 
-    [JsonProperty("name")]
-    public string Name { get; set; } = "";
-
-    [JsonProperty("version")]
-    public string Version { get; set; } = "";
-
-    [JsonProperty("category_id")]
-    public int CategoryId { get; set; }
-
-    [JsonProperty("category_name")]
-    public string? CategoryName { get; set; }
-
-    [JsonProperty("is_primary")]
-    public bool IsPrimary { get; set; }
-
-    [JsonProperty("file_name")]
-    public string FileName { get; set; } = "";
-
-    [JsonProperty("size")]
-    public long Size { get; set; }
-
-    [JsonProperty("size_kb")]
-    public long SizeKb { get; set; }
-
-    [JsonProperty("uploaded_timestamp")]
-    public long UploadedTimestamp { get; set; }
-
-    [JsonProperty("description")]
-    public string? Description { get; set; }
-
-    // Convenience
-    public string SizeFormatted => SizeKb < 1024 
-        ? $"{SizeKb} KB" 
+    public string SizeFormatted => SizeKb < 1024
+        ? $"{SizeKb} KB"
         : $"{SizeKb / 1024.0:F1} MB";
-
     public DateTime UploadedDate => DateTimeOffset.FromUnixTimeSeconds(UploadedTimestamp).DateTime;
 }
 
 public class NexusDownloadLink
 {
-    [JsonProperty("name")]
-    public string Name { get; set; } = "";
-
-    [JsonProperty("short_name")]
-    public string ShortName { get; set; } = "";
-
-    [JsonProperty("URI")]
-    public string Uri { get; set; } = "";
+    [JsonProperty("name")] public string Name { get; set; } = "";
+    [JsonProperty("short_name")] public string ShortName { get; set; } = "";
+    [JsonProperty("URI")] public string Uri { get; set; } = "";
 }
 
 public class NexusGame
 {
-    [JsonProperty("id")]
-    public int Id { get; set; }
+    [JsonProperty("id")] public int Id { get; set; }
+    [JsonProperty("name")] public string Name { get; set; } = "";
+    [JsonProperty("forum_url")] public string ForumUrl { get; set; } = "";
+    [JsonProperty("nexusmods_url")] public string NexusmodsUrl { get; set; } = "";
+    [JsonProperty("genre")] public string Genre { get; set; } = "";
+    [JsonProperty("domain_name")] public string DomainName { get; set; } = "";
+    [JsonProperty("mods")] public int ModCount { get; set; }
+    [JsonProperty("downloads")] public long Downloads { get; set; }
 
-    [JsonProperty("name")]
-    public string Name { get; set; } = "";
-
-    [JsonProperty("forum_url")]
-    public string ForumUrl { get; set; } = "";
-
-    [JsonProperty("nexusmods_url")]
-    public string NexusmodsUrl { get; set; } = "";
-
-    [JsonProperty("genre")]
-    public string Genre { get; set; } = "";
-
-    [JsonProperty("domain_name")]
-    public string DomainName { get; set; } = "";
-
-    [JsonProperty("mods")]
-    public int ModCount { get; set; }
-
-    [JsonProperty("downloads")]
-    public long Downloads { get; set; }
-    
-    // Formatted properties for XAML binding
     public string DomainNameFormatted => $"({DomainName})";
     public string ModCountFormatted => $"{ModCount} mods";
 }
@@ -894,19 +742,11 @@ public class NexusUpdateCheck
     public NexusMod? Mod { get; set; }
 }
 
-/// <summary>
-/// Response from the updated.json endpoint (returns mod IDs and timestamps, not full mod data)
-/// </summary>
 public class NexusModUpdate
 {
-    [JsonProperty("mod_id")]
-    public int ModId { get; set; }
-    
-    [JsonProperty("latest_file_update")]
-    public long LatestFileUpdate { get; set; }
-    
-    [JsonProperty("latest_mod_activity")]
-    public long LatestModActivity { get; set; }
+    [JsonProperty("mod_id")] public int ModId { get; set; }
+    [JsonProperty("latest_file_update")] public long LatestFileUpdate { get; set; }
+    [JsonProperty("latest_mod_activity")] public long LatestModActivity { get; set; }
 }
 
 #endregion

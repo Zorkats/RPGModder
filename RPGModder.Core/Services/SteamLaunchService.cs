@@ -8,9 +8,7 @@ using System.Text.RegularExpressions;
 
 namespace RPGModder.Core.Services;
 
-/// <summary>
-/// Service for detecting Steam installation and launching games through Steam
-/// </summary>
+// Service for detecting Steam installation and launching games through Steam
 public class SteamLaunchService
 {
     // Known Steam AppIDs for RPG Maker games
@@ -43,11 +41,13 @@ public class SteamLaunchService
         { "Look Outside", 2714540 },
     };
 
-    /// <summary>
-    /// Get the Steam installation path from registry
-    /// </summary>
+    // Get the Steam installation path from registry
     public string? GetSteamPath()
     {
+        // Registry is only available on Windows
+        if (!OperatingSystem.IsWindows())
+            return null;
+
         try
         {
             // Try 64-bit registry first
@@ -70,24 +70,20 @@ public class SteamLaunchService
         }
         catch
         {
-            // Registry access may fail on non-Windows or restricted systems
+            // Registry access may fail on restricted systems
         }
 
         return null;
     }
 
-    /// <summary>
-    /// Check if Steam is installed
-    /// </summary>
+    // Check if Steam is installed
     public bool IsSteamInstalled()
     {
         var steamPath = GetSteamPath();
         return !string.IsNullOrEmpty(steamPath) && File.Exists(Path.Combine(steamPath, "steam.exe"));
     }
 
-    /// <summary>
-    /// Detect Steam AppID for a game from various sources
-    /// </summary>
+    // Detect Steam AppID for a game from various sources
     public int? DetectSteamAppId(string gameRoot, string? gameName = null)
     {
         // Method 1: Check for steam_appid.txt in game folder
@@ -148,9 +144,7 @@ public class SteamLaunchService
         return null;
     }
 
-    /// <summary>
-    /// Parse a Steam appmanifest file to extract AppID for a specific game folder
-    /// </summary>
+    // Parse a Steam appmanifest file to extract AppID for a specific game folder
     private int? ParseAppManifest(string manifestPath, string gameRoot)
     {
         try
@@ -186,9 +180,7 @@ public class SteamLaunchService
         return null;
     }
 
-    /// <summary>
-    /// Launch a game through Steam using the steam:// protocol
-    /// </summary>
+    // Launch a game through Steam using the steam:// protocol
     public bool LaunchThroughSteam(int appId)
     {
         try
@@ -207,9 +199,7 @@ public class SteamLaunchService
         }
     }
 
-    /// <summary>
-    /// Launch a game - tries Steam first if available, otherwise direct launch
-    /// </summary>
+    // Launch a game - tries Steam first if available, otherwise direct launch
     public bool LaunchGame(string exePath, string gameRoot, string? gameName = null, bool preferSteam = true)
     {
         if (preferSteam && IsSteamInstalled())
@@ -239,9 +229,7 @@ public class SteamLaunchService
         }
     }
 
-    /// <summary>
-    /// Get a friendly name for the launch method
-    /// </summary>
+    // Get a friendly name for the launch method
     public string GetLaunchMethodName(string gameRoot, string? gameName = null)
     {
         if (IsSteamInstalled())

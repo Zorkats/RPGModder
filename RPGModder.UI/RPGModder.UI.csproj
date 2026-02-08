@@ -7,10 +7,10 @@
         <ApplicationManifest>app.manifest</ApplicationManifest>
         <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
 
-        <Version>1.1.0</Version>
-        <FileVersion>1.1.0</FileVersion>
-        <AssemblyVersion>1.1.0</AssemblyVersion>
-        <Authors>Vicente</Authors>
+        <Version>1.1.1</Version>
+        <FileVersion>1.1.1</FileVersion>
+        <AssemblyVersion>1.1.1</AssemblyVersion>
+        <Authors>Zorkats</Authors>
         <Company>RPGModder</Company>
         <Product>RPGModder</Product>
 

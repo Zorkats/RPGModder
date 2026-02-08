@@ -39,9 +39,11 @@ public partial class MainWindow : Window
     private readonly NexusApiService _nexus = new();
     private readonly SteamLaunchService _steamLauncher = new();
     private readonly UpdateService _updater = new();
+    private readonly DownloadManager _downloadManager = new();
     private PackerResult? _currentAnalysis;
     private string? _tempExtractPath;
     private CancellationTokenSource? _scanCts;
+    private CancellationTokenSource? _nexusCts; // Cancels in-flight Nexus API calls
     
     // Nexus game linking
     private NexusGameMapping? _currentNexusGame;
@@ -219,8 +221,10 @@ public partial class MainWindow : Window
 
                     if (modInfo != null)
                     {
-                        // CONNECT THE DOTS: Call the actual download method
-                        await DownloadAndInstallMod(links[0].Uri, modInfo.Name, modInfo);
+                        // Pass filename with .zip hint — DownloadManager will resolve the
+                        // real name from Content-Disposition if available
+                        string fileHint = $"{modInfo.Name}.zip";
+                        await DownloadAndInstallMod(links[0].Uri, fileHint, modInfo);
                     }
                     else
                     {
@@ -485,6 +489,9 @@ public partial class MainWindow : Window
         _gameRoot = "";
         _gameExePath = "";
         _hasPendingChanges = false;
+        
+        // Cancel any in-flight Nexus operations
+        _nexusCts?.Cancel();
         
         // Clear Nexus game state
         _currentNexusGame = null;
@@ -1422,7 +1429,9 @@ public partial class MainWindow : Window
             string cleanName = string.Join("", dialog.ResultText.Split(Path.GetInvalidFileNameChars()));
 
             // Save current configuration as this new profile
-            _profile.LoadOrder = InstalledMods.Where(m => m.IsEnabled).Select(m => m.FolderName).ToList();
+            // Use _allMods for LoadOrder (all mods in order) and filter for EnabledMods
+            _profile.EnabledMods = _allMods.Where(m => m.IsEnabled).Select(m => m.FolderName).ToList();
+            _profile.LoadOrder = _allMods.Select(m => m.FolderName).ToList();
 
             string path = Path.Combine(_gameRoot, $"mod_profile_{cleanName}.json");
             File.WriteAllText(path, JsonConvert.SerializeObject(_profile, Formatting.Indented));
@@ -1873,37 +1882,52 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Cancel any in-flight Nexus request
+        _nexusCts?.Cancel();
+        _nexusCts = new CancellationTokenSource();
+        var ct = _nexusCts.Token;
+
         _currentNexusCategory = category;
         UpdateCategoryButtonStyles();
-        
+
         TxtNexusResults.Text = $"Loading {category} mods...";
-        NexusMods.Clear();
+        // Don't clear NexusMods here — keep old results visible as loading indicator
 
         NexusSearchResult result;
         string categoryLabel;
-        
-        switch (category)
+
+        try
         {
-            case "trending":
-                result = await _nexus.GetTrendingModsAsync(gameDomain);
-                categoryLabel = "trending";
-                break;
-            case "updated":
-                result = await _nexus.GetUpdatedModsAsync(gameDomain);
-                categoryLabel = "recently updated";
-                break;
-            case "all":
-                // Combine all categories for more results
-                result = await _nexus.GetAllModsCombinedAsync(gameDomain);
-                categoryLabel = "all";
-                break;
-            case "latest":
-            default:
-                result = await _nexus.GetLatestModsAsync(gameDomain);
-                categoryLabel = "latest";
-                break;
+            switch (category)
+            {
+                case "trending":
+                    result = await _nexus.GetTrendingModsAsync(gameDomain, ct);
+                    categoryLabel = "trending";
+                    break;
+                case "updated":
+                    result = await _nexus.GetUpdatedModsAsync(gameDomain, ct);
+                    categoryLabel = "recently updated";
+                    break;
+                case "all":
+                    result = await _nexus.GetAllModsCombinedAsync(gameDomain, ct);
+                    categoryLabel = "all";
+                    break;
+                case "latest":
+                default:
+                    result = await _nexus.GetLatestModsAsync(gameDomain, ct);
+                    categoryLabel = "latest";
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return; // Silently abort — a newer request replaced this one
         }
 
+        // Only update UI if this request wasn't cancelled
+        if (ct.IsCancellationRequested) return;
+
+        NexusMods.Clear();
         if (result.Success)
         {
             foreach (var mod in result.Mods)
@@ -1994,10 +2018,26 @@ public partial class MainWindow : Window
             return;
         }
 
-        TxtNexusResults.Text = "Searching...";
-        NexusMods.Clear();
+        // Cancel any in-flight request
+        _nexusCts?.Cancel();
+        _nexusCts = new CancellationTokenSource();
+        var ct = _nexusCts.Token;
 
-        var result = await _nexus.SearchModsAsync(gameDomain, query);
+        TxtNexusResults.Text = "Searching...";
+
+        NexusSearchResult result;
+        try
+        {
+            result = await _nexus.SearchModsAsync(gameDomain, query, ct: ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (ct.IsCancellationRequested) return;
+
+        NexusMods.Clear();
 
         if (result.Success)
         {
@@ -2007,9 +2047,21 @@ public partial class MainWindow : Window
             }
         }
 
-        TxtNexusResults.Text = string.IsNullOrEmpty(query)
-            ? $"Showing {NexusMods.Count} recent mods"
-            : $"Found {NexusMods.Count} mods matching \"{query}\"";
+        if (string.IsNullOrEmpty(query))
+        {
+            TxtNexusResults.Text = $"Showing {NexusMods.Count} recent mods";
+        }
+        else if (NexusMods.Count == 0 && result.IsClientSideSearch)
+        {
+            // No results from client-side filtering — mod may still exist on Nexus
+            TxtNexusResults.Text = $"No mods matching \"{query}\" in cached results. Try browsing on Nexus directly.";
+        }
+        else
+        {
+            TxtNexusResults.Text = result.IsClientSideSearch
+                ? $"Found {NexusMods.Count} mods matching \"{query}\" (limited search — browse Nexus for full results)"
+                : $"Found {NexusMods.Count} mods matching \"{query}\"";
+        }
     }
 
     private string GetSelectedNexusGameDomain()
@@ -2143,9 +2195,7 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>
-    /// Called when a game is loaded - tries to detect and link to Nexus
-    /// </summary>
+    // Called when a game is loaded - tries to detect and link to Nexus
     private async Task DetectNexusGame()
     {
         if (string.IsNullOrEmpty(_gameExePath)) return;
@@ -2320,96 +2370,128 @@ public partial class MainWindow : Window
         SetStatus($"Downloading {mod.Name}...", true);
         DownloadsPanel.IsVisible = true;
 
-        var progress = new Progress<double>(p =>
+        try
         {
-            // Update progress UI
-            TxtDownloadCount.Text = $"({p:F0}%)";
-        });
+            // Use DownloadManager for proper queuing, progress, and cancellation
+            var downloadItem = await _downloadManager.QueueDownloadAsync(downloadUrl, fileName, mod);
 
-        string downloadFolder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Downloads", "RPGModder"
-        );
-
-        var filePath = await _nexus.DownloadFileAsync(downloadUrl, downloadFolder, progress);
-
-        if (filePath != null && File.Exists(filePath))
-        {
-            // Auto-install if a game is loaded
-            if (_engine != null)
+            // Subscribe to progress updates from the download manager
+            void OnProgress(DownloadItem item)
             {
-                // 1. Check if we already have this mod installed (by Nexus ID)
-                var existingMod = InstalledMods.FirstOrDefault(m => m.Manifest.Metadata.NexusId == mod.ModId);
-
-                string statusMsg;
-                InstallResult result;
-                string modsDir = Path.Combine(_gameRoot, "Mods");
-                Directory.CreateDirectory(modsDir);
-
-                if (existingMod != null)
+                if (item.Id != downloadItem.Id) return;
+                Dispatcher.UIThread.Post(() =>
                 {
-                    // CASE A: UPDATE
-                    // We found the mod! Update it in the SAME folder.
-                    statusMsg = $"Updating {mod.Name} (v{mod.Version})...";
-                    SetStatus(statusMsg, true);
+                    TxtDownloadCount.Text = $"({item.ProgressFormatted}) {item.SpeedFormatted}";
+                });
+            }
 
-                    result = await System.Threading.Tasks.Task.Run(() =>
-                        _installer.InstallModWithNexusInfo(
-                            filePath,
-                            modsDir,
-                            mod.ModId,
-                            mod.Version,
-                            existingMod.FolderName // <--- FORCE OVERWRITE of existing folder
-                        ));
-                }
-                else
+            void OnCompleted(DownloadItem item)
+            {
+                if (item.Id != downloadItem.Id) return;
+                _downloadManager.DownloadProgress -= OnProgress;
+                _downloadManager.DownloadCompleted -= OnCompleted;
+                _downloadManager.DownloadFailed -= OnFailed;
+            }
+
+            void OnFailed(DownloadItem item)
+            {
+                if (item.Id != downloadItem.Id) return;
+                _downloadManager.DownloadProgress -= OnProgress;
+                _downloadManager.DownloadCompleted -= OnCompleted;
+                _downloadManager.DownloadFailed -= OnFailed;
+                Dispatcher.UIThread.Post(() =>
                 {
-                    // CASE B: NEW INSTALL
-                    statusMsg = $"Installing {mod.Name} (v{mod.Version})...";
-                    SetStatus(statusMsg, true);
+                    SetStatus($"Download failed for {mod.Name}: {item.Error}", false);
+                    DownloadsPanel.IsVisible = false;
+                    TxtDownloadCount.Text = "(0)";
+                });
+            }
 
-                    result = await System.Threading.Tasks.Task.Run(() =>
-                        _installer.InstallModWithNexusInfo(
-                            filePath,
-                            modsDir,
-                            mod.ModId,
-                            mod.Version
-                            // No folder name passed -> Installer will generate one
-                        ));
-                }
+            _downloadManager.DownloadProgress += OnProgress;
+            _downloadManager.DownloadCompleted += OnCompleted;
+            _downloadManager.DownloadFailed += OnFailed;
 
-                // 2. Handle Success/Failure
-                if (result.Success && result.FolderName != null)
+            // Wait for the download to finish
+            while (downloadItem.Status == DownloadStatus.Queued ||
+                   downloadItem.Status == DownloadStatus.Downloading)
+            {
+                await Task.Delay(200);
+            }
+
+            string? filePath = downloadItem.Status == DownloadStatus.Completed
+                ? downloadItem.DestinationPath
+                : null;
+
+            if (filePath != null && File.Exists(filePath))
+            {
+                // Auto-install if a game is loaded
+                if (_engine != null)
                 {
-                    // Auto-enable if it's a new install (optional, but good UX)
-                    if (!_profile.EnabledMods.Contains(result.FolderName))
+                    // Check if we already have this mod installed (by Nexus ID)
+                    var existingMod = InstalledMods.FirstOrDefault(m => m.Manifest.Metadata.NexusId == mod.ModId);
+
+                    string statusMsg;
+                    InstallResult result;
+                    string modsDir = Path.Combine(_gameRoot, "Mods");
+                    Directory.CreateDirectory(modsDir);
+
+                    if (existingMod != null)
                     {
-                        _profile.EnabledMods.Add(result.FolderName);
-                        SaveProfile();
+                        // UPDATE existing mod
+                        statusMsg = $"Updating {mod.Name} (v{mod.Version})...";
+                        SetStatus(statusMsg, true);
+
+                        result = await System.Threading.Tasks.Task.Run(() =>
+                            _installer.InstallModWithNexusInfo(
+                                filePath, modsDir, mod.ModId, mod.Version, existingMod.FolderName));
+                    }
+                    else
+                    {
+                        // NEW INSTALL
+                        statusMsg = $"Installing {mod.Name} (v{mod.Version})...";
+                        SetStatus(statusMsg, true);
+
+                        result = await System.Threading.Tasks.Task.Run(() =>
+                            _installer.InstallModWithNexusInfo(
+                                filePath, modsDir, mod.ModId, mod.Version));
                     }
 
-                    // Refresh UI
-                    RefreshModList();
-                    MarkPendingChanges();
-                    SetStatus($"✓ {statusMsg.Replace("...", "")} Complete!", true);
+                    if (result.Success && result.FolderName != null)
+                    {
+                        if (!_profile.EnabledMods.Contains(result.FolderName))
+                        {
+                            _profile.EnabledMods.Add(result.FolderName);
+                            SaveProfile();
+                        }
+
+                        RefreshModList();
+                        MarkPendingChanges();
+                        SetStatus($"✓ {statusMsg.Replace("...", "")} Complete!", true);
+                    }
+                    else
+                    {
+                        SetStatus($"Installation failed: {result.Error}", false);
+                    }
                 }
                 else
                 {
-                    SetStatus($"Installation failed: {result.Error}", false);
+                    SetStatus($"Downloaded to: {filePath}. Load a game to install.", true);
                 }
             }
             else
             {
-                SetStatus($"Downloaded to: {filePath}. Load a game to install.", true);
+                SetStatus($"Download failed for {mod.Name}.", false);
             }
         }
-        else
+        catch (Exception ex)
         {
-            SetStatus($"Download failed for {mod.Name}.", false);
+            SetStatus($"Download error: {ex.Message}", false);
         }
-
-        DownloadsPanel.IsVisible = false;
-        TxtDownloadCount.Text = "(0)";
+        finally
+        {
+            DownloadsPanel.IsVisible = false;
+            TxtDownloadCount.Text = "(0)";
+        }
     }
 
     private void BtnSaveNexusKey_Click(object? sender, RoutedEventArgs e)
@@ -2482,8 +2564,17 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         base.OnClosed(e);
+
+        // Cancel any in-flight operations
         _scanCts?.Cancel();
+        _nexusCts?.Cancel();
+
+        // Cleanup temp files
         CleanupTempExtract();
+
+        // Dispose services that hold unmanaged resources
+        _nexus.Dispose();
+        _downloadManager.Dispose();
     }
 
     private async void CheckUpdatesOnStartup()

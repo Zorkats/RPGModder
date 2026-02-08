@@ -3,18 +3,14 @@ using Newtonsoft.Json.Linq;
 
 namespace RPGModder.Core.Services;
 
-/// <summary>
-/// Intelligently merges JSON data from multiple mods (like Wrye Bash for Bethesda games).
-/// Instead of "last mod wins entirely", this merges at the record/field level.
-/// </summary>
+// Intelligently merges JSON data from multiple mods (like Wrye Bash for Bethesda games).
+// Instead of "last mod wins entirely", this merges at the record/field level.
 public class JsonMergeService
 {
     public MergeReport LastReport { get; private set; } = new();
 
-    /// <summary>
-    /// Merges multiple JSON sources into one, with intelligent conflict resolution.
-    /// Sources should be ordered by load priority (first = lowest, last = highest).
-    /// </summary>
+    // Merges multiple JSON sources into one, with intelligent conflict resolution.
+    // Sources should be ordered by load priority (first = lowest, last = highest).
     public string MergeJsonFiles(string baseJson, IEnumerable<string> modJsons, string fileName)
     {
         LastReport = new MergeReport { FileName = fileName };
@@ -52,10 +48,8 @@ public class JsonMergeService
         }
     }
 
-    /// <summary>
-    /// Merges array-based data (like Actors.json, Items.json, etc.)
-    /// Each array element is treated as a record with an implicit ID (index).
-    /// </summary>
+    // Merges array-based data (like Actors.json, Items.json, etc.)
+    // Each array element is treated as a record with an implicit ID (index).
     private string MergeArrayBased(JArray baseArray, IEnumerable<string> modJsons)
     {
         LastReport.Strategy = "Array merge (record-level)";
@@ -154,9 +148,7 @@ public class JsonMergeService
         return mergedArray.ToString(Formatting.Indented);
     }
 
-    /// <summary>
-    /// Merges object-based data (like System.json)
-    /// </summary>
+    // Merges object-based data (like System.json)
     private string MergeObjectBased(JObject baseObject, IEnumerable<string> modJsons)
     {
         LastReport.Strategy = "Object merge (field-level)";
@@ -190,9 +182,7 @@ public class JsonMergeService
         return merged.ToString(Formatting.Indented);
     }
 
-    /// <summary>
-    /// Deep merges two JObjects, tracking field-level conflicts
-    /// </summary>
+    // Deep merges two JObjects, tracking field-level conflicts
     private ObjectMergeResult MergeObjects(JObject target, JObject source)
     {
         var result = new ObjectMergeResult

@@ -3,18 +3,14 @@ using System.Diagnostics;
 
 namespace RPGModder.Core.Services;
 
-/// <summary>
-/// Handles nxm:// protocol registration and parsing for one-click mod installs.
-/// Protocol format: nxm://gameDomain/mods/modId/files/fileId?key=xxx&expires=xxx&user_id=xxx
-/// </summary>
+// Handles nxm:// protocol registration and parsing for one-click mod installs.
+// Protocol format: nxm://gameDomain/mods/modId/files/fileId?key=xxx&expires=xxx&user_id=xxx
 public class NxmProtocolHandler
 {
     private const string ProtocolName = "nxm";
     private const string AppName = "RPGModder";
 
-    /// <summary>
-    /// Registers RPGModder as the handler for nxm:// links (requires admin on first run)
-    /// </summary>
+    // Registers RPGModder as the handler for nxm:// links (requires admin on first run)
     public static bool RegisterProtocol(string exePath)
     {
         if (!OperatingSystem.IsWindows())
@@ -45,9 +41,7 @@ public class NxmProtocolHandler
         }
     }
 
-    /// <summary>
-    /// Checks if RPGModder is registered as the nxm:// handler
-    /// </summary>
+    // Checks if RPGModder is registered as the nxm:// handler
     public static bool IsProtocolRegistered()
     {
         if (!OperatingSystem.IsWindows())
@@ -67,9 +61,7 @@ public class NxmProtocolHandler
         }
     }
 
-    /// <summary>
-    /// Unregisters the nxm:// protocol handler
-    /// </summary>
+    // Unregisters the nxm:// protocol handler
     public static bool UnregisterProtocol()
     {
         if (!OperatingSystem.IsWindows())
@@ -86,9 +78,7 @@ public class NxmProtocolHandler
         }
     }
 
-    /// <summary>
-    /// Parses an nxm:// URL into its components
-    /// </summary>
+    // Parses an nxm:// URL into its components
     public static NxmLink? ParseNxmUrl(string url)
     {
         if (string.IsNullOrWhiteSpace(url))
@@ -147,9 +137,7 @@ public class NxmProtocolHandler
         }
     }
 
-    /// <summary>
-    /// Simple query string parser (replaces HttpUtility.ParseQueryString)
-    /// </summary>
+    // Simple query string parser (replaces HttpUtility.ParseQueryString)
     private static Dictionary<string, string> ParseQueryString(string query)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -176,9 +164,7 @@ public class NxmProtocolHandler
         return result;
     }
 
-    /// <summary>
-    /// Checks if the application was launched with an nxm:// argument
-    /// </summary>
+    // Checks if the application was launched with an nxm:// argument
     public static NxmLink? GetLaunchLink(string[] args)
     {
         if (args.Length == 0) return null;
@@ -195,9 +181,7 @@ public class NxmProtocolHandler
     }
 }
 
-/// <summary>
-/// Parsed nxm:// link data
-/// </summary>
+// Parsed nxm:// link data
 public class NxmLink
 {
     public string GameDomain { get; set; } = "";

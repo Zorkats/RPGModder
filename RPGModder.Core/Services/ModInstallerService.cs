@@ -41,16 +41,48 @@ public class ModInstallerService
     // Returns the installed mod's folder name, or null if installation failed
     public InstallResult InstallMod(string sourcePath, string modsDirectory, string? targetFolderName = null)
     {
-        if (File.Exists(sourcePath) && sourcePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        if (File.Exists(sourcePath))
         {
-            return InstallFromZip(sourcePath, modsDirectory, targetFolderName);
+            // Check by extension first, then by magic bytes (handles missing/wrong extensions)
+            if (IsZipFile(sourcePath))
+            {
+                return InstallFromZip(sourcePath, modsDirectory, targetFolderName);
+            }
+
+            return new InstallResult
+            {
+                Success = false,
+                Error = "Unsupported file format. Only ZIP archives and folders with mod.json are supported."
+            };
         }
         else if (Directory.Exists(sourcePath))
         {
             return InstallFromFolder(sourcePath, modsDirectory, targetFolderName);
         }
 
-        return new InstallResult { Success = false, Error = "Invalid path." };
+        return new InstallResult { Success = false, Error = "File or folder not found." };
+    }
+
+    // Checks if a file is a ZIP archive by extension or by reading magic bytes (PK\x03\x04)
+    private static bool IsZipFile(string filePath)
+    {
+        if (filePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Check ZIP magic bytes: PK\x03\x04
+        try
+        {
+            using var stream = File.OpenRead(filePath);
+            var header = new byte[4];
+            if (stream.Read(header, 0, 4) == 4)
+            {
+                return header[0] == 0x50 && header[1] == 0x4B &&
+                       header[2] == 0x03 && header[3] == 0x04;
+            }
+        }
+        catch { }
+
+        return false;
     }
 
     // Installs from a ZIP file - extracts and finds mod.json
