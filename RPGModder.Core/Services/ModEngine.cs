@@ -676,7 +676,7 @@ public class ModEngine
     // Resolves the source file path, checking multiple possible locations
     private string ResolveModSourcePath(string modFolder, string sourcePath)
     {
-        // Try exact path first
+        // Try exact path first (works for most mods)
         string exactPath = Path.Combine(modFolder, sourcePath);
         if (File.Exists(exactPath)) return exactPath;
 
@@ -699,15 +699,27 @@ public class ModEngine
     }
 
     // Normalizes target path - strips www/ prefix if game uses www folder
+    // Strips www/ prefix from target paths for MV games (where _contentPath already points to www/).
+    // Also handles any remaining nested prefixes as a safety net.
     private string NormalizeTargetPath(string targetPath)
     {
-        // If target has www/ prefix and game uses www folder, strip it
-        // (because _contentPath already points to www/)
-        if (_usesWwwFolder &&
-            (targetPath.StartsWith("www/", StringComparison.OrdinalIgnoreCase) ||
-             targetPath.StartsWith("www\\", StringComparison.OrdinalIgnoreCase)))
+        string normalized = targetPath.Replace('\\', '/');
+
+        // Strip everything up to and including "www/" (handles both "www/x" and "Folder/www/x")
+        if (_usesWwwFolder)
         {
-            return targetPath.Substring(4);
+            int wwwIndex = normalized.LastIndexOf("www/", StringComparison.OrdinalIgnoreCase);
+            if (wwwIndex >= 0)
+                return normalized.Substring(wwwIndex + 4);
+        }
+
+        // For non-www games or paths without www/, strip any prefix before known game folders
+        string[] knownRoots = { "data/", "js/", "img/", "audio/", "fonts/", "css/", "icon/", "movies/", "effects/" };
+        foreach (var root in knownRoots)
+        {
+            int idx = normalized.IndexOf(root, StringComparison.OrdinalIgnoreCase);
+            if (idx > 0)
+                return normalized.Substring(idx);
         }
 
         return targetPath;

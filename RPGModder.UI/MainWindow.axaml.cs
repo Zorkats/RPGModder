@@ -458,6 +458,7 @@ public partial class MainWindow : Window
 
             _profile = new ModProfile();
             LoadProfile();
+            RefreshProfileList(); // Scan for existing profiles now that _gameRoot is set
             RefreshModList();
 
             BtnInstallMod.IsEnabled = true;
