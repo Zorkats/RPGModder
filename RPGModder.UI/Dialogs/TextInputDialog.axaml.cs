@@ -9,17 +9,17 @@ public partial class TextInputDialog : Window
 
     public TextInputDialog() { InitializeComponent(); }
 
-    public TextInputDialog(string title, string prompt) : this()
+    public TextInputDialog(string title, string prompt, string defaultValue = "") : this()
     {
         TxtTitle.Text = title;
         TxtInput.Watermark = prompt;
+        TxtInput.Text = defaultValue;
     }
 
     private void BtnOk_Click(object? sender, RoutedEventArgs e)
     {
-        ResultText = TxtInput.Text ?? "";
-        Close(true);
+        Close(TxtInput.Text ?? "");
     }
 
-    private void BtnCancel_Click(object? sender, RoutedEventArgs e) => Close(false);
+    private void BtnCancel_Click(object? sender, RoutedEventArgs e) => Close(null);
 }

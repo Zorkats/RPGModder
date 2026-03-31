@@ -83,8 +83,8 @@ public class ModPackerServiceTests : IDisposable
         string vanilla = CreateTestFolder("vanilla3");
         string work = CreateTestFolder("work3");
 
-        var vanillaSystem = new { gameTitle = "Original", screenWidth = 816, screenHeight = 624 };
-        var workSystem = new { gameTitle = "Original", screenWidth = 1920, screenHeight = 1080 };
+        var vanillaSystem = new { gameTitle = "Original", versionId = 1, battleBgm = "Battle1" };
+        var workSystem = new { gameTitle = "Original", versionId = 2, battleBgm = "Battle2" };
 
         CreateFile(vanilla, "data/System.json", JsonConvert.SerializeObject(vanillaSystem));
         CreateFile(work, "data/System.json", JsonConvert.SerializeObject(workSystem));
@@ -98,8 +98,8 @@ public class ModPackerServiceTests : IDisposable
         Assert.Contains("data/System.json", result.JsonPatches.Keys);
 
         var patch = result.JsonPatches["data/System.json"];
-        Assert.Equal(1920, patch["screenWidth"]?.ToObject<int>());
-        Assert.Equal(1080, patch["screenHeight"]?.ToObject<int>());
+        Assert.Equal(2, patch["versionId"]?.ToObject<int>());
+        Assert.Equal("Battle2", patch["battleBgm"]?.ToString());
         Assert.Null(patch["gameTitle"]); // Unchanged value should NOT be in patch
     }
 
@@ -246,13 +246,13 @@ public class ModPackerServiceTests : IDisposable
         var vanillaSystem = new
         {
             gameTitle = "Test",
-            advanced = new { screenWidth = 816, screenHeight = 624 }
+            advanced = new { versionId = 1, battleBgm = "Battle1" }
         };
 
         var workSystem = new
         {
             gameTitle = "Test",
-            advanced = new { screenWidth = 1920, screenHeight = 1080 }
+            advanced = new { versionId = 2, battleBgm = "Battle2" }
         };
 
         CreateFile(vanilla, "data/System.json", JsonConvert.SerializeObject(vanillaSystem));
@@ -268,6 +268,6 @@ public class ModPackerServiceTests : IDisposable
         var patch = result.JsonPatches["data/System.json"];
         var advanced = patch["advanced"] as Newtonsoft.Json.Linq.JObject;
         Assert.NotNull(advanced);
-        Assert.Equal(1920, advanced["screenWidth"]?.ToObject<int>());
+        Assert.Equal(2, advanced["versionId"]?.ToObject<int>());
     }
 }

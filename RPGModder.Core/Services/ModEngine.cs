@@ -1,23 +1,21 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using RPGModder.Core.Models;
-using System.Text;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 
 namespace RPGModder.Core.Services;
 
 public class ModEngine
 {
-    private readonly string _gamePath;        // Root folder (where Game.exe lives)
-    private readonly string _contentPath;     // Where game content lives (either _gamePath or _gamePath/www)
+    private readonly string _gamePath;
+    private readonly string _contentPath;
     private readonly string _backupPath;
     private readonly string _modsRootPath;
-    private readonly bool _usesWwwFolder;     // True for nw.js packaged games
+    private readonly bool _usesWwwFolder;
     private readonly JsonMergeService _merger = new();
-
-    private readonly string[] _protectedFolders = new[]
-    {
-        "data", "js", "img", "audio", "fonts", "css", "icon", "movies", "effects"
-    };
 
     // --- Configuration ---
     public bool UseMerging { get; set; } = true;
@@ -35,18 +33,13 @@ public class ModEngine
     {
         _gamePath = Path.GetDirectoryName(gameExecutablePath) ?? string.Empty;
 
-        // Detect if game uses www subfolder structure (common for nw.js packaged MV games)
         string wwwPath = Path.Combine(_gamePath, "www");
         _usesWwwFolder = Directory.Exists(wwwPath) &&
                          (Directory.Exists(Path.Combine(wwwPath, "js")) ||
                           Directory.Exists(Path.Combine(wwwPath, "data")));
 
         _contentPath = _usesWwwFolder ? wwwPath : _gamePath;
-
-        // The "Vault" for clean vanilla files
         _backupPath = Path.Combine(_gamePath, "ModManager_Backups", "Clean_Vanilla");
-
-        // The Mods directory
         _modsRootPath = Path.Combine(_gamePath, "Mods");
 
         if (!Directory.Exists(_backupPath)) Directory.CreateDirectory(_backupPath);
@@ -59,16 +52,37 @@ public class ModEngine
 
     public void InitializeSafeState()
     {
-        // 1. Content Backup (Assets & Data)
         string markerFile = Path.Combine(_backupPath, "backup_complete.marker");
+
         if (!File.Exists(markerFile))
         {
-            foreach (var folder in _protectedFolders)
+            // --- NEW: DIRTY INSTALLATION TRIPWIRE ---
+            if (IsDirtyInstallation())
+            {
+                throw new InvalidOperationException(
+                    "Dirty installation detected! It looks like Fear & Hunger Mod Manager (FHMM) or another runtime loader " +
+                    "is already installed directly into your base game.\n\n" +
+                    "To use RPGModder safely, you must have a 100% clean, unmodified game. " +
+                    "Please verify your game files on Steam/Itch.io to restore the vanilla state, then install FHMM as a standard ZIP mod inside RPGModder."
+                );
+            }
+
+            foreach (var folder in FilePolicyService.ProtectedFolders)
             {
                 string sourcePath = Path.Combine(_contentPath, folder);
                 if (Directory.Exists(sourcePath))
                 {
                     CopyDirectory(sourcePath, Path.Combine(_backupPath, folder));
+                }
+            }
+
+            // Backup standalone root files
+            foreach (var file in FilePolicyService.ProtectedRootFiles)
+            {
+                string sourceFile = Path.Combine(_contentPath, file);
+                if (File.Exists(sourceFile))
+                {
+                    File.Copy(sourceFile, Path.Combine(_backupPath, file), true);
                 }
             }
 
@@ -80,25 +94,45 @@ public class ModEngine
             }, Formatting.Indented));
         }
 
-        // 2. Save File "Time Capsule" (Protecting legacy saves)
         InitializeSafeSaves();
     }
+
+    private bool IsDirtyInstallation()
+    {
+        // We no longer check for the mere existence of the "mods" folder because
+        // Steam's "Verify Integrity" leaves orphaned folders behind.
+        // A game is only truly "dirty" if the boot sequence is actively hijacked.
+
+        string indexHtml = Path.Combine(_contentPath, "index.html");
+        if (File.Exists(indexHtml))
+        {
+            string content = File.ReadAllText(indexHtml);
+
+            // Matches Mattie's HTML comments, script tags, and TY Mod Loader
+            if (content.Contains("mattieFMModLoader.js", StringComparison.OrdinalIgnoreCase) ||
+                content.Contains("MATTIE", StringComparison.OrdinalIgnoreCase) ||
+                content.Contains("TY_ModLoader", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
 
     private void InitializeSafeSaves()
     {
         JustCreatedSaveBackup = false;
 
-        // Locate real save folder
         string liveSavePath = Path.Combine(_contentPath, "save");
         if (!Directory.Exists(liveSavePath) && Directory.Exists(Path.Combine(_gamePath, "save")))
         {
             liveSavePath = Path.Combine(_gamePath, "save");
         }
 
-        // Define the Time Capsule path
         string timeCapsulePath = Path.Combine(_gamePath, "ModManager_Backups", "Saves", "ORIGINAL_VANILLA");
 
-        // ONLY run if the capsule doesn't exist yet (First run or first update to this version)
         if (!Directory.Exists(timeCapsulePath) && Directory.Exists(liveSavePath))
         {
             Directory.CreateDirectory(timeCapsulePath);
@@ -120,7 +154,7 @@ public class ModEngine
                     "They represent the state of your saves before you started using Profiles.\n" +
                     "Restore these if your saves ever disappear or get corrupted.");
 
-                JustCreatedSaveBackup = true; // Signals UI to show notification
+                JustCreatedSaveBackup = true;
             }
         }
     }
@@ -131,7 +165,6 @@ public class ModEngine
 
     public void SwapSaveFiles(string oldProfileName, string newProfileName)
     {
-        // 1. Identify Save Location
         string liveSavePath = Path.Combine(_contentPath, "save");
         if (!Directory.Exists(liveSavePath) && Directory.Exists(Path.Combine(_gamePath, "save")))
         {
@@ -146,34 +179,22 @@ public class ModEngine
         if (!Directory.Exists(oldStorage)) Directory.CreateDirectory(oldStorage);
         if (!Directory.Exists(newStorage)) Directory.CreateDirectory(newStorage);
 
-        // Identify valid save files
         var extensions = new[] { ".rpgsave", ".rmmzsave", "config.rpgsave", "global.rpgsave" };
         var liveFiles = Directory.GetFiles(liveSavePath)
             .Where(f => extensions.Any(ext => f.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
             .ToList();
-
-        // SAFE SWAP PATTERN: use a temp staging area so a crash at any point is recoverable.
-        //
-        // Step 1: Copy live saves → old profile storage (backup current state)
-        // Step 2: Copy new profile saves → temp staging directory
-        // Step 3: Only after staging is fully written, swap live saves with staged saves
-        //
-        // If we crash during step 1-2, live saves are still intact.
-        // If we crash during step 3, the staging dir has the complete set for recovery.
 
         string stagingDir = Path.Combine(storageRoot, $"_swap_staging_{Guid.NewGuid():N}");
         Directory.CreateDirectory(stagingDir);
 
         try
         {
-            // Step 1: BACKUP live → old profile storage
             foreach (var file in liveFiles)
             {
                 string fileName = Path.GetFileName(file);
                 File.Copy(file, Path.Combine(oldStorage, fileName), true);
             }
 
-            // Step 2: STAGE new profile saves into temp directory
             if (Directory.Exists(newStorage))
             {
                 foreach (var file in Directory.GetFiles(newStorage))
@@ -183,7 +204,6 @@ public class ModEngine
                 }
             }
 
-            // Step 3: SWAP — delete live saves, move staged files in
             foreach (var file in liveFiles)
             {
                 File.Delete(file);
@@ -198,7 +218,6 @@ public class ModEngine
         }
         finally
         {
-            // Cleanup staging directory (safe even if swap failed — originals in oldStorage)
             try { if (Directory.Exists(stagingDir)) Directory.Delete(stagingDir, true); }
             catch { }
         }
@@ -213,9 +232,24 @@ public class ModEngine
         LastMergeReports.Clear();
 
         // 1. Restore Vanilla State
-        foreach (var folder in _protectedFolders)
+        foreach (var folder in FilePolicyService.ProtectedFolders)
         {
             SmartRestoreFolder(folder);
+        }
+
+        // Restore standalone root files
+        foreach (var file in FilePolicyService.ProtectedRootFiles)
+        {
+            string backupFile = Path.Combine(_backupPath, file);
+            string gameFile = Path.Combine(_contentPath, file);
+
+            if (File.Exists(backupFile))
+            {
+                if (!File.Exists(gameFile) || !FilesAreEqual(backupFile, gameFile))
+                {
+                    CopyOrLinkFile(backupFile, gameFile);
+                }
+            }
         }
 
         // 2. Apply Mods
@@ -227,6 +261,11 @@ public class ModEngine
         {
             RebuildSequential(profile);
         }
+
+        // 3. Synchronize FHMM JSON states right before the game is allowed to launch
+        var fhmmService = new FhmmCompatibilityService();
+        var profileMods = profile.EnabledMods.Select(name => new ModListItem(null, name, true));
+        fhmmService.EnforceFhmmStates(_gamePath, _usesWwwFolder, profileMods);
     }
 
     private void RebuildSequential(ModProfile profile)
@@ -255,12 +294,10 @@ public class ModEngine
 
     private void RebuildWithMerging(ModProfile profile)
     {
-        // Data structures for merging
         var fileOperations = new Dictionary<string, List<(string ModPath, FileOperation Op)>>(StringComparer.OrdinalIgnoreCase);
         var jsonPatches = new Dictionary<string, List<(string ModName, JObject Data)>>(StringComparer.OrdinalIgnoreCase);
         var allPlugins = new List<PluginEntry>();
 
-        // 1. Collect all operations from all enabled mods
         foreach (string modFolderName in profile.EnabledMods)
         {
             string modPath = Path.Combine(_modsRootPath, modFolderName);
@@ -273,7 +310,6 @@ public class ModEngine
                 var manifest = JsonConvert.DeserializeObject<ModManifest>(File.ReadAllText(manifestPath));
                 if (manifest == null) continue;
 
-                // Collect file operations
                 foreach (var op in manifest.FileOps)
                 {
                     string targetPath = NormalizeTargetPath(op.Target);
@@ -282,7 +318,6 @@ public class ModEngine
                     fileOperations[targetPath].Add((modPath, op));
                 }
 
-                // Collect JSON patches
                 foreach (var patch in manifest.JsonPatches)
                 {
                     string targetPath = NormalizeTargetPath(patch.Target);
@@ -291,28 +326,35 @@ public class ModEngine
                     jsonPatches[targetPath].Add((modFolderName, patch.MergeData));
                 }
 
-                // Collect plugins
                 allPlugins.AddRange(manifest.PluginsRegistry);
             }
             catch { }
         }
 
-        // 2. Apply Merged File Operations
         foreach (var kvp in fileOperations)
         {
             string targetPath = kvp.Key;
             var operations = kvp.Value;
             string fullTargetPath = Path.Combine(_contentPath, targetPath);
             string ext = Path.GetExtension(targetPath).ToLowerInvariant();
+            string fileName = Path.GetFileName(targetPath).ToLowerInvariant();
 
-            // Special handling for JSON files with multiple sources -> Merge
+            // Intercept semantic configuration files via Policy Engine
+            if (FilePolicyService.IsConfigSave(fileName))
+            {
+                if (UseMerging)
+                {
+                    ApplyMergedLzConfig(targetPath, operations);
+                    continue;
+                }
+            }
+
             if (ext == ".json" && operations.Count > 1)
             {
                 ApplyMergedJson(targetPath, operations);
             }
             else
             {
-                // Non-JSON or single source -> Last one wins (Load Order)
                 var lastOp = operations.Last();
                 string sourceFile = ResolveModSourcePath(lastOp.ModPath, lastOp.Op.Source);
                 if (File.Exists(sourceFile))
@@ -322,13 +364,11 @@ public class ModEngine
             }
         }
 
-        // 3. Apply Merged JSON Patches
         foreach (var kvp in jsonPatches)
         {
             ApplyMergedJsonPatches(kvp.Key, kvp.Value);
         }
 
-        // 4. Apply Merged Plugins
         if (allPlugins.Count > 0)
         {
             UpdatePluginsJs(allPlugins);
@@ -341,7 +381,6 @@ public class ModEngine
 
     private void ApplyMod(string modFolder, ModManifest manifest)
     {
-        // 1. File Copy
         foreach (var op in manifest.FileOps)
         {
             string sourceFile = ResolveModSourcePath(modFolder, op.Source);
@@ -354,18 +393,41 @@ public class ModEngine
             }
         }
 
-        // 2. JSON Patch
         foreach (var patch in manifest.JsonPatches)
         {
             string targetPath = NormalizeTargetPath(patch.Target);
             ApplyJsonPatch(targetPath, patch.MergeData);
         }
 
-        // 3. Plugins
         if (manifest.PluginsRegistry.Count > 0)
         {
             UpdatePluginsJs(manifest.PluginsRegistry);
         }
+    }
+
+    // Hand-offs LZ-String Base64 config files to the JsonMergeService directly into isolated vault
+    private void ApplyMergedLzConfig(string targetPath, List<(string ModPath, FileOperation Op)> operations)
+    {
+        string baseConfigPath = Path.Combine(_gamePath, _usesWwwFolder ? "www/save" : "save", Path.GetFileName(targetPath));
+        string baseContent = File.Exists(baseConfigPath) ? File.ReadAllText(baseConfigPath) : "{}";
+
+        var modContents = new List<string>();
+        foreach (var (modPath, op) in operations)
+        {
+            string sourceFile = ResolveModSourcePath(modPath, op.Source);
+            if (File.Exists(sourceFile))
+            {
+                modContents.Add(File.ReadAllText(sourceFile));
+            }
+        }
+
+        if (modContents.Count == 0) return;
+
+        string mergedLzString = _merger.MergeLzStringConfigFiles(baseContent, modContents, Path.GetFileName(targetPath));
+
+        Directory.CreateDirectory(Path.GetDirectoryName(baseConfigPath)!);
+        File.WriteAllText(baseConfigPath, mergedLzString);
+        LastMergeReports.Add(_merger.LastReport);
     }
 
     private void ApplyMergedJson(string targetPath, List<(string ModPath, FileOperation Op)> operations)
@@ -373,14 +435,12 @@ public class ModEngine
         string fullTargetPath = Path.Combine(_contentPath, targetPath);
         string backupPath = Path.Combine(_backupPath, targetPath);
 
-        // Get base (vanilla) content
         string baseJson = "[]";
         if (File.Exists(backupPath))
             baseJson = File.ReadAllText(backupPath);
         else if (File.Exists(fullTargetPath))
             baseJson = File.ReadAllText(fullTargetPath);
 
-        // Collect all mod versions
         var modJsons = new List<string>();
         foreach (var (modPath, op) in operations)
         {
@@ -393,11 +453,9 @@ public class ModEngine
 
         if (modJsons.Count == 0) return;
 
-        // Merge!
         string mergedJson = _merger.MergeJsonFiles(baseJson, modJsons, Path.GetFileName(targetPath));
         LastMergeReports.Add(_merger.LastReport);
 
-        // Write merged result
         string? targetDir = Path.GetDirectoryName(fullTargetPath);
         if (targetDir != null) Directory.CreateDirectory(targetDir);
         File.WriteAllText(fullTargetPath, mergedJson);
@@ -440,13 +498,11 @@ public class ModEngine
     {
         if (original.Type != JTokenType.Object || patch.Type != JTokenType.Object)
         {
-            // If Hardcore is ON and both are arrays, try to merge
             if (UseHardcoreMerging && original.Type == JTokenType.Array && patch.Type == JTokenType.Array)
             {
                 MergeArrays((JArray)original, (JArray)patch);
                 return;
             }
-            // Otherwise, simple replace
             return;
         }
 
@@ -463,7 +519,6 @@ public class ModEngine
             }
             else
             {
-                // Recursion
                 if (originalProp.Value.Type == JTokenType.Object && property.Value.Type == JTokenType.Object)
                 {
                     MergeJsonObjects(originalProp.Value, property.Value);
@@ -474,7 +529,6 @@ public class ModEngine
                 }
                 else
                 {
-                    // Overwrite
                     originalProp.Value = property.Value;
                 }
             }
@@ -483,21 +537,15 @@ public class ModEngine
 
     private void MergeArrays(JArray original, JArray patch)
     {
-        // Hardcore Array Merging:
-        // 1. If items have "id", match by ID.
-        // 2. Otherwise, append unique items.
-
         foreach (var item in patch)
         {
             if (item.Type == JTokenType.Object && item["id"] != null)
             {
-                // Try to find existing item with same ID
                 var id = item["id"]?.ToString();
                 var existing = original.FirstOrDefault(x => x["id"] != null && x["id"]?.ToString() == id);
 
                 if (existing != null)
                 {
-                    // Recursive merge the object inside the array
                     MergeJsonObjects(existing, item);
                 }
                 else
@@ -507,7 +555,6 @@ public class ModEngine
             }
             else
             {
-                // No ID, check if exact duplicate exists before appending
                 if (!original.Any(x => JToken.DeepEquals(x, item)))
                 {
                     original.Add(item);
@@ -533,9 +580,7 @@ public class ModEngine
 
                 foreach (var newPlugin in newPlugins)
                 {
-                    // Remove existing entry with same name to avoid duplicates
                     currentPlugins.RemoveAll(p => p.Name == newPlugin.Name);
-                    // Add new one
                     currentPlugins.Add(newPlugin);
                 }
 
@@ -558,7 +603,6 @@ public class ModEngine
         if (!Directory.Exists(backupDir)) return;
         if (!Directory.Exists(gameDir)) Directory.CreateDirectory(gameDir);
 
-        // 1. Restore missing/altered files from Backup -> Game
         foreach (var backupFile in Directory.GetFiles(backupDir, "*", SearchOption.AllDirectories))
         {
             string relativePath = Path.GetRelativePath(backupDir, backupFile);
@@ -566,12 +610,10 @@ public class ModEngine
 
             if (!File.Exists(gameFile) || !FilesAreEqual(backupFile, gameFile))
             {
-                // File is missing or modified -> Restore vanilla
                 CopyOrLinkFile(backupFile, gameFile);
             }
         }
 
-        // 2. Remove leftover mod files (files in Game but NOT in Backup)
         foreach (var gameFile in Directory.GetFiles(gameDir, "*", SearchOption.AllDirectories))
         {
             string relativePath = Path.GetRelativePath(gameDir, gameFile);
@@ -583,7 +625,6 @@ public class ModEngine
             }
         }
 
-        // Cleanup empty directories
         DeleteEmptyDirs(gameDir);
     }
 
@@ -601,10 +642,7 @@ public class ModEngine
                 File.CreateSymbolicLink(dest, source);
                 return;
             }
-            catch
-            {
-                // Fallback silently to copy if link fails
-            }
+            catch { }
         }
 
         File.Copy(source, dest, true);
@@ -626,12 +664,10 @@ public class ModEngine
         var info1 = new FileInfo(path1);
         var info2 = new FileInfo(path2);
 
-        // 1. Fast check: Size
         if (info1.Length != info2.Length) return false;
 
         try
         {
-            // 2. Small files (<10MB): byte-level comparison
             if (info1.Length < 10 * 1024 * 1024)
             {
                 byte[] file1 = File.ReadAllBytes(path1);
@@ -639,7 +675,6 @@ public class ModEngine
                 return file1.SequenceEqual(file2);
             }
 
-            // 3. Large files (>=10MB): SHA-256 hash comparison
             using var sha = System.Security.Cryptography.SHA256.Create();
 
             byte[] hash1, hash2;
@@ -652,7 +687,6 @@ public class ModEngine
         }
         catch
         {
-            // If we can't read (locked?), assume different to be safe
             return false;
         }
     }
@@ -673,21 +707,17 @@ public class ModEngine
         catch { }
     }
 
-    // Resolves the source file path, checking multiple possible locations
     private string ResolveModSourcePath(string modFolder, string sourcePath)
     {
-        // Try exact path first (works for most mods)
         string exactPath = Path.Combine(modFolder, sourcePath);
         if (File.Exists(exactPath)) return exactPath;
 
-        // If game uses www/ and source doesn't have it, try with www/ prefix
         if (_usesWwwFolder && !sourcePath.StartsWith("www", StringComparison.OrdinalIgnoreCase))
         {
             string wwwPath = Path.Combine(modFolder, "www", sourcePath);
             if (File.Exists(wwwPath)) return wwwPath;
         }
 
-        // If source has www/ prefix, try without it
         if (sourcePath.StartsWith("www/", StringComparison.OrdinalIgnoreCase) ||
             sourcePath.StartsWith("www\\", StringComparison.OrdinalIgnoreCase))
         {
@@ -695,17 +725,13 @@ public class ModEngine
             if (File.Exists(withoutWww)) return withoutWww;
         }
 
-        return exactPath; // Return original path (will fail gracefully)
+        return exactPath;
     }
 
-    // Normalizes target path - strips www/ prefix if game uses www folder
-    // Strips www/ prefix from target paths for MV games (where _contentPath already points to www/).
-    // Also handles any remaining nested prefixes as a safety net.
     private string NormalizeTargetPath(string targetPath)
     {
         string normalized = targetPath.Replace('\\', '/');
 
-        // Strip everything up to and including "www/" (handles both "www/x" and "Folder/www/x")
         if (_usesWwwFolder)
         {
             int wwwIndex = normalized.LastIndexOf("www/", StringComparison.OrdinalIgnoreCase);
@@ -713,12 +739,11 @@ public class ModEngine
                 return normalized.Substring(wwwIndex + 4);
         }
 
-        // For non-www games or paths without www/, strip any prefix before known game folders
         string[] knownRoots = { "data/", "js/", "img/", "audio/", "fonts/", "css/", "icon/", "movies/", "effects/" };
         foreach (var root in knownRoots)
         {
             int idx = normalized.IndexOf(root, StringComparison.OrdinalIgnoreCase);
-            if (idx > 0)
+            if (idx >= 0)
                 return normalized.Substring(idx);
         }
 

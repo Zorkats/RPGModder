@@ -5,14 +5,14 @@
         WindowStartupLocation="CenterOwner" CanResize="False"
         SystemDecorations="BorderOnly" Background="#1E1E1E" ExtendClientAreaToDecorationsHint="True">
 
-    <Border BorderBrush="#444" BorderThickness="1">
-        <StackPanel Margin="20" Spacing="20">
-            <TextBlock Name="TxtTitle" Text="Title" FontWeight="Bold" FontSize="16" Foreground="White"/>
-            <TextBlock Name="TxtMessage" Text="Message goes here..." TextWrapping="Wrap" Foreground="#DDD"/>
+    <Border BorderBrush="{StaticResource SeparatorBrush}" BorderThickness="1">
+        <StackPanel Margin="24" Spacing="25">
+            <TextBlock Name="TxtTitle" Text="Title" FontWeight="ExtraBold" FontSize="18" Foreground="{StaticResource TextMainBrush}"/>
+            <TextBlock Name="TxtMessage" Text="Message goes here..." TextWrapping="Wrap" Foreground="{StaticResource TextMutedBrush}" FontSize="14" LineHeight="20"/>
 
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-                <Button Name="BtnCancel" Content="Cancel" IsVisible="False"/>
-                <Button Name="BtnOk" Content="OK" Classes="primary"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+                <Button Name="BtnCancel" Content="Cancel" IsVisible="False" Padding="20,10"/>
+                <Button Name="BtnOk" Content="OK" Classes="primary" Padding="30,10" FontWeight="Bold"/>
             </StackPanel>
         </StackPanel>
     </Border>

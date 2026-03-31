@@ -1,0 +1,57 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:models="clr-namespace:RPGModder.Core.Models;assembly=RPGModder.Core"
+        x:Class="RPGModder.UI.Dialogs.ModLinkWindow"
+        Title="Link Mod to Nexus" Width="500" Height="600"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BackgroundBrush}">
+
+    <Grid RowDefinitions="Auto, Auto, *, Auto" Margin="24">
+        <StackPanel Spacing="8">
+            <TextBlock Text="Link to Nexus Mods" FontSize="22" FontWeight="ExtraBold" Foreground="{StaticResource TextMainBrush}"/>
+            <TextBlock Text="Search for this mod on Nexus to enable automatic update checks." 
+                       Foreground="{StaticResource TextMutedBrush}" TextWrapping="Wrap" FontSize="13"/>
+        </StackPanel>
+
+        <Grid Grid.Row="1" ColumnDefinitions="*, Auto" Margin="0,20,0,15">
+            <TextBox Name="TxtSearch" Watermark="Search mod name..." 
+                     Padding="12,10" VerticalAlignment="Center"/>
+            <Button Name="BtnSearch" Grid.Column="1" Content="🔍 Search" 
+                    Margin="8,0,0,0" Padding="15,10" Classes="primary" IsDefault="True"/>
+        </Grid>
+
+        <Border Grid.Row="2" Classes="card" Padding="0">
+            <Panel>
+                <TextBlock Name="TxtStatus" Text="Enter a name to search..." 
+                           HorizontalAlignment="Center" VerticalAlignment="Center" 
+                           Foreground="{StaticResource TextDimBrush}"/>
+                
+                <ListBox Name="LstResults" Background="Transparent" Padding="5">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="models:NexusMod">
+                            <Border BorderBrush="{StaticResource SeparatorBrush}" BorderThickness="0,0,0,1" Padding="12,8">
+                                <Grid ColumnDefinitions="Auto, *, Auto">
+                                    <StackPanel Grid.Column="1" Spacing="2">
+                                        <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="{StaticResource TextMainBrush}"/>
+                                        <TextBlock Text="{Binding AuthorFormatted}" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="2" Text="{Binding VersionFormatted}" 
+                                               FontSize="11" Foreground="{StaticResource SuccessBrush}" 
+                                               VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Panel>
+        </Border>
+
+        <Grid Grid.Row="3" ColumnDefinitions="Auto, *, Auto" Margin="0,20,0,0">
+            <Button Name="BtnManual" Content="Enter ID Manually" Background="Transparent" Foreground="{StaticResource TextDimBrush}"/>
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="12">
+                <Button Name="BtnCancel" Content="Cancel" Padding="20,10"/>
+                <Button Name="BtnLink" Content="Link Selected" Padding="25,10" Classes="primary" IsEnabled="False"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

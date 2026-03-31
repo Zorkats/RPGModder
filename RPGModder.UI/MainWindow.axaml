@@ -22,7 +22,21 @@
                 <TextBlock Text="RPGModder" FontSize="24" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
                 <Border Background="#2D2D30" CornerRadius="4" Padding="8,4" VerticalAlignment="Center"
                         Name="GameBadge" IsVisible="False">
-                    <TextBlock Name="TxtGameName" Text="No Game" Foreground="#4EC9B0" FontSize="12" FontWeight="SemiBold"/>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Name="TxtGameName" Text="No Game" Foreground="#4EC9B0" FontSize="12" FontWeight="SemiBold"/>
+                        <Border Name="BadgeFhmm" Background="#8B4513" CornerRadius="3" Padding="4,1" IsVisible="False" VerticalAlignment="Center" ToolTip.Tip="Fear &amp; Hunger Mod Loader (FHMM) detected">
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock Text="FHMM" FontSize="9" Foreground="#FFA500" FontWeight="Bold"/>
+                                <Button Name="BtnFhmmHelp" Content="?" Padding="2,0" Background="Transparent" BorderThickness="0" FontSize="9" Foreground="#AAA" Cursor="Hand"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Name="BadgeTy" Background="#1E3A1E" CornerRadius="3" Padding="4,1" IsVisible="False" VerticalAlignment="Center" ToolTip.Tip="TY Mod Loader detected">
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock Text="TY" FontSize="9" Foreground="#8BC34A" FontWeight="Bold"/>
+                                <Button Name="BtnTyHelp" Content="?" Padding="2,0" Background="Transparent" BorderThickness="0" FontSize="9" Foreground="#AAA" Cursor="Hand"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
                 </Border>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" Margin="20,0,0,0" VerticalAlignment="Center">
@@ -89,7 +103,11 @@
                                     <ContextMenu>
                                         <MenuItem Header="📁 Open Folder" Name="CtxOpenFolder"/>
                                         <MenuItem Header="📄 View mod.json" Name="CtxViewManifest"/>
-                                        <MenuItem Header="⚔️ View Conflicts" Name="CtxViewConflicts"/> <Separator/>
+                                        <MenuItem Header="⚔️ View Conflicts" Name="CtxViewConflicts"/> 
+                                        <Separator/>
+                                        <MenuItem Header="🔗 Link to Nexus" Name="CtxLinkNexus"/>
+                                        <MenuItem Header="🔍 Check for Updates" Name="CtxCheckUpdate"/>
+                                        <MenuItem Header="📥 Download Update" Name="CtxDownloadUpdate" IsVisible="False" Foreground="#4EC9B0" FontWeight="Bold"/>
                                         <Separator/>
                                         <MenuItem Header="⬆️ Move Up" Name="CtxMoveUp"/>
                                         <MenuItem Header="⬇️ Move Down" Name="CtxMoveDown"/>
@@ -343,10 +361,25 @@
 
             <!-- NEXUS MODS TAB -->
             <TabItem Header="🌐 Nexus Mods" FontSize="16">
-                <Grid RowDefinitions="Auto, Auto, Auto, *, Auto" Margin="10">
+                <Grid RowDefinitions="Auto, Auto, Auto, Auto, *, Auto" Margin="10">
+                    
+                    <!-- Migration Banner -->
+                    <Border Grid.Row="0" Name="BdrMigrationBanner" IsVisible="False" Background="#33FFCC00" BorderBrush="#88FFCC00" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,10">
+                        <Grid ColumnDefinitions="*, Auto">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <TextBlock Text="🛡️" VerticalAlignment="Center" FontSize="16"/>
+                                <TextBlock Text="Upgrade to Secure One-Click login for Nexus Mods." 
+                                           VerticalAlignment="Center" Foreground="#EEE"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <Button Name="BtnUpgradeSso" Content="Upgrade Now" Padding="12,4" Background="#4EC9B0" Foreground="#1E1E1E" FontWeight="SemiBold"/>
+                                <Button Name="BtnDismissMigration" Content="Later" Padding="12,4" Background="#333"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
                     
                     <!-- Auth Status / Search Bar -->
-                    <Border Grid.Row="0" Background="#252526" CornerRadius="6" Padding="12">
+                    <Border Grid.Row="1" Background="#252526" CornerRadius="6" Padding="12">
                         <Grid ColumnDefinitions="Auto, *, Auto">
                             <!-- Auth Status -->
                             <StackPanel Name="NexusAuthPanel" Orientation="Horizontal" Spacing="10">
@@ -354,8 +387,8 @@
                                         Background="#F44747"/>
                                 <TextBlock Name="TxtNexusStatus" Text="Not connected" Foreground="#AAA" 
                                            VerticalAlignment="Center"/>
-                                <Button Name="BtnNexusConnect" Content="Connect" Padding="12,4"
-                                        ToolTip.Tip="Connect with your Nexus Mods API key"/>
+                                <Button Name="BtnNexusConnect" Content="Login with Nexus Mods" Padding="12,4"
+                                        ToolTip.Tip="Connect using secure one-click authentication"/>
                             </StackPanel>
                             
                             <!-- Search -->
@@ -379,25 +412,21 @@
                         </Grid>
                     </Border>
                     
-                    <!-- Category Tabs -->
-                    <Border Grid.Row="1" Margin="0,10,0,0">
-                        <StackPanel Orientation="Horizontal" Spacing="5">
-                            <Button Name="BtnNexusAll" Content="📚 All" Padding="15,8" 
-                                    Background="#4EC9B0" Foreground="#1E1E1E" FontWeight="SemiBold"
-                                    IsEnabled="False"/>
-                            <Button Name="BtnNexusLatest" Content="🆕 Latest" Padding="15,8"
-                                    Background="#333" IsEnabled="False"/>
-                            <Button Name="BtnNexusTrending" Content="🔥 Trending" Padding="15,8"
-                                    Background="#333" IsEnabled="False"/>
-                            <Button Name="BtnNexusUpdated" Content="🔄 Updated" Padding="15,8"
-                                    Background="#333" IsEnabled="False"/>
-                            <Button Name="BtnNexusRefresh" Content="⟳" Padding="10,8"
-                                    Background="#333" ToolTip.Tip="Refresh" IsEnabled="False"/>
-                        </StackPanel>
+                    <!-- Filters -->
+                    <Border Grid.Row="2" Margin="0,10,0,0">
+                        <Grid ColumnDefinitions="Auto, Auto, *, Auto">
+                            <ComboBox Name="CmbNexusCategories" Grid.Column="0" Width="240" PlaceholderText="All Categories" IsEnabled="False" Margin="0,0,10,0"/>
+                            <ComboBox Name="CmbNexusSort" Grid.Column="1" Width="160" SelectedIndex="0" IsEnabled="False" Margin="0,0,10,0">
+                                <ComboBoxItem Content="Trending"/>
+                                <ComboBoxItem Content="Latest"/>
+                                <ComboBoxItem Content="Updated"/>
+                            </ComboBox>
+                            <Button Name="BtnNexusRefresh" Grid.Column="3" Content="⟳ Refresh" Padding="10,8" IsEnabled="False"/>
+                        </Grid>
                     </Border>
                     
                     <!-- Game Linking Panel (hidden by default) -->
-                    <Border Grid.Row="2" Name="NexusLinkPanel" Background="#1E3A1E" CornerRadius="6" 
+                    <Border Grid.Row="3" Name="NexusLinkPanel" Background="#1E3A1E" CornerRadius="6" 
                             Margin="0,10,0,0" Padding="12" IsVisible="False">
                         <Grid ColumnDefinitions="Auto, *, Auto, Auto">
                             <TextBlock Text="🔗 Link to Nexus:" Foreground="#8BC34A" VerticalAlignment="Center"/>
@@ -411,7 +440,7 @@
                     </Border>
                     
                     <!-- Game Search Results (hidden by default) -->
-                    <Border Grid.Row="2" Name="NexusGameResultsPanel" Background="#252526" CornerRadius="6" 
+                    <Border Grid.Row="3" Name="NexusGameResultsPanel" Background="#252526" CornerRadius="6" 
                             Margin="0,10,0,0" Padding="10" IsVisible="False">
                         <Grid RowDefinitions="Auto, Auto">
                             <TextBlock Text="Select a game:" Foreground="#888" Margin="0,0,0,8"/>
@@ -436,7 +465,7 @@
                     </Border>
                     
                     <!-- Mod Browser / Results -->
-                    <Border Grid.Row="3" Background="#252526" CornerRadius="6" Margin="0,10,0,0" Padding="10">
+                    <Border Grid.Row="4" Background="#252526" CornerRadius="6" Margin="0,10,0,0" Padding="10">
                         <Grid RowDefinitions="Auto, *">
                             <!-- Results Header -->
                             <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="0,0,0,10">
@@ -446,7 +475,7 @@
                             <!-- Mod List -->
                             <ListBox Grid.Row="1" Name="LstNexusMods" Background="Transparent">
                                 <ListBox.ItemTemplate>
-                                    <DataTemplate x:DataType="services:NexusMod">
+                                    <DataTemplate x:DataType="models:NexusMod">
                                         <Grid ColumnDefinitions="80, *, Auto" MinHeight="70" Margin="0,5">
                                             <!-- Thumbnail with async loading -->
                                             <Border Grid.Column="0" Background="#333" CornerRadius="4" 
@@ -580,7 +609,7 @@
                             <StackPanel Spacing="12">
                                 <TextBlock Text="Nexus Mods Integration" FontSize="16" FontWeight="SemiBold" Foreground="#EEE"/>
                                 
-                                <Grid ColumnDefinitions="Auto, *, Auto" Margin="0,5,0,0">
+                                <Grid ColumnDefinitions="Auto, *, Auto, Auto" Margin="0,5,0,0">
                                     <TextBlock Text="API Key:" Foreground="#CCC" VerticalAlignment="Center" Margin="0,0,10,0"/>
                                     <TextBox Grid.Column="1" Name="TxtNexusApiKey" 
                                              Watermark="Enter your Nexus Mods API key"
@@ -588,6 +617,7 @@
                                              Background="#1E1E1E" Foreground="#DDD" Padding="10,8"
                                              MaxWidth="400" HorizontalAlignment="Left"/>
                                     <Button Grid.Column="2" Name="BtnSaveNexusKey" Content="Save" Margin="10,0,0,0" Padding="12,6"/>
+                                    <Button Grid.Column="3" Name="BtnDisconnectNexus" Content="Disconnect" Classes="danger" Margin="10,0,0,0" Padding="12,6" IsVisible="False"/>
                                 </Grid>
                                 
                                 <TextBlock Foreground="#666" FontSize="10" TextWrapping="Wrap">

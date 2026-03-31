@@ -1,3 +1,7 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -8,23 +12,6 @@ namespace RPGModder.Core.Services;
 // The Auto-Packer service - compares modded vs vanilla folders and generates mod.json
 public class ModPackerService
 {
-    // Files to never include in a mod package
-    private static readonly HashSet<string> IgnoredFiles = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "save", "saves", "www/save", "www/saves",
-        ".git", ".gitignore", ".DS_Store", "Thumbs.db",
-        "ModManager_Backups", "Mods", "profile.json"
-    };
-
-    // Binary file extensions (not JSON-diffable)
-    private static readonly HashSet<string> BinaryExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp",
-        ".ogg", ".m4a", ".mp3", ".wav", ".rpgmvo", ".rpgmvm",
-        ".ttf", ".otf", ".woff", ".woff2",
-        ".exe", ".dll", ".so", ".dylib"
-    };
-
     // JSON files that support smart patching
     private static readonly HashSet<string> PatchableJsonFiles = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -38,7 +25,6 @@ public class ModPackerService
 
         try
         {
-            // Normalize paths
             workFolder = Path.GetFullPath(workFolder);
             vanillaFolder = Path.GetFullPath(vanillaFolder);
 
@@ -56,13 +42,12 @@ public class ModPackerService
                 return result;
             }
 
-            // Get all files in work folder
+            // Short-Circuit 1: Filter ignored files immediately
             var workFiles = GetAllFiles(workFolder)
                 .Select(f => GetRelativePath(workFolder, f))
-                .Where(f => !ShouldIgnore(f))
+                .Where(f => FilePolicyService.GetPackerAction(f) != FileAction.Ignore)
                 .ToList();
 
-            // Get all files in vanilla folder
             var vanillaFilesSet = GetAllFiles(vanillaFolder)
                 .Select(f => GetRelativePath(vanillaFolder, f))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -72,6 +57,8 @@ public class ModPackerService
                 string workFilePath = Path.Combine(workFolder, relativePath);
                 string vanillaFilePath = Path.Combine(vanillaFolder, relativePath);
 
+                FileAction action = FilePolicyService.GetPackerAction(relativePath);
+
                 if (!vanillaFilesSet.Contains(relativePath))
                 {
                     // Brand new file - doesn't exist in vanilla
@@ -79,8 +66,20 @@ public class ModPackerService
                 }
                 else if (File.Exists(vanillaFilePath))
                 {
-                    // File exists in both - check if modified
-                    bool isModified = !FilesAreEqual(workFilePath, vanillaFilePath);
+                    bool isModified = false;
+
+                    // Short-Circuit 2: Bypass expensive byte-comparisons for semantic files
+                    if (action == FileAction.ForceInclude)
+                    {
+                        isModified = true;
+                        string warning = $"Detected semantic configuration file ({relativePath}). Forced inclusion applied.";
+                        if (!result.Warnings.Contains(warning)) result.Warnings.Add(warning);
+                    }
+                    else
+                    {
+                        // File exists in both - check if modified
+                        isModified = !FilesAreEqual(workFilePath, vanillaFilePath);
+                    }
 
                     if (isModified)
                     {
@@ -90,7 +89,6 @@ public class ModPackerService
                         // Check if this is a patchable JSON file
                         if (ext == ".json" && PatchableJsonFiles.Contains(fileName))
                         {
-                            // Try to extract just the changed keys
                             var patch = ExtractJsonPatch(vanillaFilePath, workFilePath);
                             if (patch != null && patch.HasValues)
                             {
@@ -98,27 +96,22 @@ public class ModPackerService
                             }
                             else
                             {
-                                // Couldn't patch, treat as full replacement
                                 result.ModifiedFiles[NormalizePath(relativePath)] = workFilePath;
                             }
                         }
                         else if (fileName.Equals("plugins.js", StringComparison.OrdinalIgnoreCase))
                         {
-                            // Special handling for plugins.js
                             var newPlugins = ExtractNewPlugins(vanillaFilePath, workFilePath);
                             result.NewPlugins.AddRange(newPlugins);
 
                             if (newPlugins.Count == 0)
                             {
-                                // plugins.js changed but no new plugins detected - include as modified
-                                result.Warnings.Add(
-                                    "plugins.js was modified but no new plugins were detected. Including as full replacement.");
+                                result.Warnings.Add("plugins.js was modified but no new plugins were detected. Including as full replacement.");
                                 result.ModifiedFiles[NormalizePath(relativePath)] = workFilePath;
                             }
                         }
                         else
                         {
-                            // Regular modified file
                             result.ModifiedFiles[NormalizePath(relativePath)] = workFilePath;
                         }
                     }
@@ -131,7 +124,6 @@ public class ModPackerService
                 {
                     string pluginName = Path.GetFileNameWithoutExtension(relativePath);
 
-                    // Only add if not already extracted from plugins.js
                     if (!result.NewPlugins.Any(p => p.Name.Equals(pluginName, StringComparison.OrdinalIgnoreCase)))
                     {
                         var entry = GeneratePluginEntryFromFile(sourcePath, pluginName);
@@ -150,7 +142,6 @@ public class ModPackerService
         return result;
     }
 
-    // Generates a ModManifest from the analysis result
     public ModManifest GenerateManifest(PackerResult analysis, ModMetadata metadata)
     {
         var manifest = new ModManifest
@@ -158,49 +149,29 @@ public class ModPackerService
             Metadata = metadata
         };
 
-        // Add new files as file_ops (source = target, files mirror game structure)
         foreach (var (relativePath, _) in analysis.NewFiles)
-        {
-            manifest.FileOps.Add(new FileOperation
-            {
-                Source = relativePath,
-                Target = relativePath
-            });
-        }
+            manifest.FileOps.Add(new FileOperation { Source = relativePath, Target = relativePath });
 
-        // Add modified files as file_ops
         foreach (var (relativePath, _) in analysis.ModifiedFiles)
-        {
-            manifest.FileOps.Add(new FileOperation
-            {
-                Source = relativePath,
-                Target = relativePath
-            });
-        }
+            manifest.FileOps.Add(new FileOperation { Source = relativePath, Target = relativePath });
 
-        // Add JSON patches
         foreach (var (targetPath, patchData) in analysis.JsonPatches)
-        {
-            manifest.JsonPatches.Add(new JsonPatch
-            {
-                Target = targetPath,
-                MergeData = patchData
-            });
-        }
+            manifest.JsonPatches.Add(new JsonPatch { Target = targetPath, MergeData = patchData });
 
-        // Add plugins
         manifest.PluginsRegistry.AddRange(analysis.NewPlugins);
+
+        // HYDRATION: Calculate FHMM status exactly once during packing
+        manifest.Metadata.IsFhmmMod = manifest.FileOps.Any(op =>
+            op.Target.Contains("mods/", StringComparison.OrdinalIgnoreCase) ||
+            op.Target.Contains("_moddata/", StringComparison.OrdinalIgnoreCase));
 
         return manifest;
     }
 
-    // Creates the complete mod package folder structure
     public void CreateModPackage(string outputFolder, ModManifest manifest, PackerResult analysis)
     {
-        // Create output folder
         Directory.CreateDirectory(outputFolder);
 
-        // Copy new files (directly into mod folder, mirroring game structure)
         foreach (var (relativePath, sourcePath) in analysis.NewFiles)
         {
             string destPath = Path.Combine(outputFolder, relativePath);
@@ -209,7 +180,6 @@ public class ModPackerService
             File.Copy(sourcePath, destPath, true);
         }
 
-        // Copy modified files
         foreach (var (relativePath, sourcePath) in analysis.ModifiedFiles)
         {
             string destPath = Path.Combine(outputFolder, relativePath);
@@ -218,7 +188,6 @@ public class ModPackerService
             File.Copy(sourcePath, destPath, true);
         }
 
-        // Write mod.json
         string manifestJson = JsonConvert.SerializeObject(manifest, Formatting.Indented);
         File.WriteAllText(Path.Combine(outputFolder, "mod.json"), manifestJson);
     }
@@ -237,24 +206,7 @@ public class ModPackerService
 
     private string NormalizePath(string path)
     {
-        // Always use forward slashes for cross-platform compatibility
         return path.Replace('\\', '/');
-    }
-
-    private bool ShouldIgnore(string relativePath)
-    {
-        // Check if path starts with any ignored folder/file
-        foreach (var ignored in IgnoredFiles)
-        {
-            if (relativePath.StartsWith(ignored, StringComparison.OrdinalIgnoreCase) ||
-                relativePath.Contains($"/{ignored}/", StringComparison.OrdinalIgnoreCase) ||
-                relativePath.Contains($"\\{ignored}\\", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private bool FilesAreEqual(string path1, string path2)
@@ -262,17 +214,14 @@ public class ModPackerService
         var info1 = new FileInfo(path1);
         var info2 = new FileInfo(path2);
 
-        // Quick check: different sizes = definitely different
         if (info1.Length != info2.Length)
             return false;
 
-        // For small files, compare byte-by-byte
-        if (info1.Length < 1024 * 1024) // 1MB
+        if (info1.Length < 1024 * 1024)
         {
             return File.ReadAllBytes(path1).SequenceEqual(File.ReadAllBytes(path2));
         }
 
-        // For larger files, use streaming comparison
         using var fs1 = File.OpenRead(path1);
         using var fs2 = File.OpenRead(path2);
 
@@ -290,42 +239,52 @@ public class ModPackerService
         return true;
     }
 
+    // Fields in System.json that should NEVER be captured by the packer (usually user-specific settings)
+    private static readonly HashSet<string> ExcludedSystemFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "screenWidth", "screenHeight", "uiAreaWidth", "uiAreaHeight", 
+        "windowLineWidth", "locale", "title1Name", "title2Name"
+    };
+
     private JObject? ExtractJsonPatch(string vanillaPath, string workPath)
     {
         try
         {
             var vanillaJson = JObject.Parse(File.ReadAllText(vanillaPath));
             var workJson = JObject.Parse(File.ReadAllText(workPath));
+            string fileName = Path.GetFileName(vanillaPath);
 
-            return GetJsonDifference(vanillaJson, workJson);
+            return GetJsonDifference(vanillaJson, workJson, fileName);
         }
         catch
         {
-            return null; // JSON parsing failed, treat as binary
+            return null;
         }
     }
 
-    // Recursively finds properties in 'modified' that differ from 'original'
-    private JObject? GetJsonDifference(JObject original, JObject modified)
+    private JObject? GetJsonDifference(JObject original, JObject modified, string? fileName = null)
     {
         var diff = new JObject();
 
         foreach (var prop in modified.Properties())
         {
+            // NEW: Skip excluded fields for specific files (like System.json resolution)
+            if (fileName != null && fileName.Equals("system.json", StringComparison.OrdinalIgnoreCase))
+            {
+                if (ExcludedSystemFields.Contains(prop.Name)) continue;
+            }
+
             var originalProp = original.Property(prop.Name);
 
             if (originalProp == null)
             {
-                // New property - include it
                 diff[prop.Name] = prop.Value.DeepClone();
             }
             else if (!JToken.DeepEquals(originalProp.Value, prop.Value))
             {
-                // Property exists but changed
                 if (originalProp.Value.Type == JTokenType.Object && prop.Value.Type == JTokenType.Object)
                 {
-                    // Recurse into nested objects
-                    var nestedDiff = GetJsonDifference((JObject)originalProp.Value, (JObject)prop.Value);
+                    var nestedDiff = GetJsonDifference((JObject)originalProp.Value, (JObject)prop.Value, fileName);
                     if (nestedDiff != null && nestedDiff.HasValues)
                     {
                         diff[prop.Name] = nestedDiff;
@@ -333,7 +292,6 @@ public class ModPackerService
                 }
                 else
                 {
-                    // Different value types or primitive change
                     diff[prop.Name] = prop.Value.DeepClone();
                 }
             }
@@ -351,7 +309,6 @@ public class ModPackerService
             var vanillaPlugins = ParsePluginsJs(File.ReadAllText(vanillaPath));
             var workPlugins = ParsePluginsJs(File.ReadAllText(workPath));
 
-            // Find plugins in work that don't exist in vanilla
             var vanillaNames = vanillaPlugins.Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             foreach (var plugin in workPlugins)
@@ -362,17 +319,13 @@ public class ModPackerService
                 }
             }
         }
-        catch
-        {
-            // Failed to parse plugins.js
-        }
+        catch { }
 
         return newPlugins;
     }
 
     private List<PluginEntry> ParsePluginsJs(string content)
     {
-        // plugins.js format: var $plugins = [ ... ];
         int startIndex = content.IndexOf('[');
         int endIndex = content.LastIndexOf(']');
 
@@ -384,10 +337,10 @@ public class ModPackerService
 
         return new();
     }
+
     private bool IsPluginFile(string relativePath)
     {
         string normalized = NormalizePath(relativePath);
-        // Supports standard js/plugins and www/js/plugins (for deployed games)
         return (normalized.IndexOf("js/plugins/", StringComparison.OrdinalIgnoreCase) >= 0)
                && normalized.EndsWith(".js", StringComparison.OrdinalIgnoreCase);
     }
@@ -396,14 +349,12 @@ public class ModPackerService
     {
         string description = "";
 
-        // Try to scrape a description from the file header
         try
         {
             foreach (var line in File.ReadLines(filePath).Take(50))
             {
                 if (line.Contains("@plugindesc"))
                 {
-                    // Match everything after @plugindesc
                     var match = Regex.Match(line, @"@plugindesc\s+(.*)");
                     if (match.Success)
                     {
@@ -415,7 +366,6 @@ public class ModPackerService
         }
         catch { }
 
-        // If no description was found, verify if it's really empty or just missing
         if (string.IsNullOrWhiteSpace(description))
         {
             description = "(Auto-detected) No description found in script file.";
@@ -430,5 +380,5 @@ public class ModPackerService
         };
     }
 
-#endregion
+    #endregion
 }

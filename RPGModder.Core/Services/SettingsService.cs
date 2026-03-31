@@ -99,6 +99,7 @@ public class AppSettings
     
     // Nexus Mods settings
     public string? NexusApiKey { get; set; }
+    public bool IsSsoAuthenticated { get; set; } = false;
     public bool NxmProtocolRegistered { get; set; } = false;
     
     // Game to Nexus domain mappings (game exe path -> nexus domain)

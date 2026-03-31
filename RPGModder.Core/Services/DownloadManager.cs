@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using RPGModder.Core.Models;
 
 namespace RPGModder.Core.Services;
 
@@ -22,9 +23,11 @@ public class DownloadManager : IDisposable
     public DownloadManager(string? downloadFolder = null)
     {
         _http = new HttpClient();
+
+        // Changed from UserProfile/Downloads to Roaming AppData
         _downloadFolder = downloadFolder ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Downloads", "RPGModder"
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "RPGModder", "TempDownloads"
         );
 
         if (!Directory.Exists(_downloadFolder))

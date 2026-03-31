@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
@@ -87,6 +89,33 @@ public class ModListItem : INotifyPropertyChanged
             }
         }
     }
+    private bool _updateAvailable;
+    public bool UpdateAvailable
+    {
+        get => _updateAvailable;
+        set
+        {
+            if (_updateAvailable != value)
+            {
+                _updateAvailable = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    private string _latestVersion = "";
+    public string LatestVersion
+    {
+        get => _latestVersion;
+        set
+        {
+            if (_latestVersion != value)
+            {
+                _latestVersion = value;
+                OnPropertyChanged();
+            }
+        }
+    }
 
     // Convenience accessors for XAML binding
     public string Name => Manifest?.Metadata?.Name ?? "Unknown";
@@ -94,11 +123,14 @@ public class ModListItem : INotifyPropertyChanged
     public string Version => Manifest?.Metadata?.Version ?? "1.0";
     public string Description => Manifest?.Metadata?.Description ?? "";
 
+    // Detects if this mod deploys files into FHMM's isolated execution environments
+    public bool IsFhmmMod => Manifest?.Metadata?.IsFhmmMod ?? false;
+
     // Get all files this mod touches
     public HashSet<string> GetAffectedFiles()
     {
         var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        
+
         if (Manifest == null) return files;
 
         foreach (var op in Manifest.FileOps)

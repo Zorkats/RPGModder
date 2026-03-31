@@ -5,6 +5,7 @@
         <Nullable>enable</Nullable>
         <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
         <ApplicationManifest>app.manifest</ApplicationManifest>
+        <ApplicationIcon>Assets\rpgmodder.ico</ApplicationIcon>
         <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
 
         <Version>1.1.2</Version>
@@ -36,5 +37,12 @@
 
     <ItemGroup>
         <ProjectReference Include="..\RPGModder.Core\RPGModder.Core.csproj" />
+        <AvaloniaResource Include="Assets\**" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Compile Update="Dialogs\ModLinkWindow.axaml.cs">
+        <DependentUpon>ModLinkWindow.axaml</DependentUpon>
+      </Compile>
     </ItemGroup>
 </Project>

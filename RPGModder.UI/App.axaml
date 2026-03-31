@@ -3,28 +3,124 @@
              x:Class="RPGModder.UI.App"
              RequestedThemeVariant="Dark">
 
+    <Application.Resources>
+        <!-- Design Tokens: Colors -->
+        <Color x:Key="BackgroundColor">#1E1E1E</Color>
+        <Color x:Key="SurfaceColor">#252526</Color>
+        <Color x:Key="SurfaceColorLight">#2D2D30</Color>
+        <Color x:Key="PrimaryColor">#0E639C</Color>
+        <Color x:Key="PrimaryColorHover">#1177BB</Color>
+        <Color x:Key="DangerColor">#5A1D1D</Color>
+        <Color x:Key="SuccessColor">#4EC9B0</Color>
+        <Color x:Key="WarningColor">#E67E22</Color>
+        <Color x:Key="BorderColor">#444444</Color>
+        <Color x:Key="SeparatorColor">#333333</Color>
+        
+        <SolidColorBrush x:Key="BackgroundBrush" Color="{StaticResource BackgroundColor}"/>
+        <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}"/>
+        <SolidColorBrush x:Key="SurfaceBrushLight" Color="{StaticResource SurfaceColorLight}"/>
+        <SolidColorBrush x:Key="PrimaryBrush" Color="{StaticResource PrimaryColor}"/>
+        <SolidColorBrush x:Key="PrimaryBrushHover" Color="{StaticResource PrimaryColorHover}"/>
+        <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource DangerColor}"/>
+        <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource SuccessColor}"/>
+        <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}"/>
+        <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}"/>
+        <SolidColorBrush x:Key="SeparatorBrush" Color="{StaticResource SeparatorColor}"/>
+        
+        <SolidColorBrush x:Key="TextMainBrush" Color="White"/>
+        <SolidColorBrush x:Key="TextMutedBrush" Color="#888888"/>
+        <SolidColorBrush x:Key="TextDimBrush" Color="#555555"/>
+        
+        <!-- Typography -->
+        <FontFamily x:Key="MainFont">Inter, Segoe UI, sans-serif</FontFamily>
+        <FontFamily x:Key="MonoFont">Consolas, JetBrains Mono, monospace</FontFamily>
+    </Application.Resources>
+
     <Application.Styles>
         <FluentTheme />
 
+        <!-- Base Button -->
         <Style Selector="Button">
-            <Setter Property="Background" Value="#3E3E42"/>
-            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="{StaticResource SurfaceBrushLight}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextMainBrush}"/>
             <Setter Property="CornerRadius" Value="4"/>
             <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <BrushTransition Property="Background" Duration="0:0:0.1"/>
+                </Transitions>
+            </Setter>
         </Style>
         <Style Selector="Button:pointerover /template/ ContentPresenter">
-            <Setter Property="Background" Value="#505055"/>
+            <Setter Property="Background" Value="#3E3E42"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+        <Style Selector="Button:pressed">
+            <Setter Property="RenderTransform" Value="scale(0.98)"/>
         </Style>
 
+        <!-- Primary Button -->
         <Style Selector="Button.primary">
-            <Setter Property="Background" Value="#0E639C"/>
+            <Setter Property="Background" Value="{StaticResource PrimaryBrush}"/>
         </Style>
         <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
-            <Setter Property="Background" Value="#1177BB"/>
+            <Setter Property="Background" Value="{StaticResource PrimaryBrushHover}"/>
         </Style>
 
+        <!-- Danger Button -->
         <Style Selector="Button.danger">
-            <Setter Property="Background" Value="#5A1D1D"/>
+            <Setter Property="Background" Value="{StaticResource DangerBrush}"/>
         </Style>
+        <Style Selector="Button.danger:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#7A2D2D"/>
+        </Style>
+
+        <!-- Tooltip -->
+        <Style Selector="ToolTip">
+            <Setter Property="Background" Value="{StaticResource SurfaceColor}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource PrimaryBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+
+        <!-- Card Style Border -->
+        <Style Selector="Border.card">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="BorderBrush" Value="{StaticResource SeparatorBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BoxShadow" Value="0 4 8 0 #10000000"/>
+        </Style>
+
+        <!-- TabControl Customization -->
+        <Style Selector="TabControl">
+            <Setter Property="Padding" Value="0"/>
+        </Style>
+        <Style Selector="TabItem">
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Padding" Value="16,8"/>
+            <Setter Property="MinWidth" Value="100"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="TabItem:selected">
+            <Setter Property="Foreground" Value="{StaticResource PrimaryBrushHover}"/>
+        </Style>
+
+        <!-- TextBox Consistency -->
+        <Style Selector="TextBox">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="10,8"/>
+        </Style>
+        <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+            <Setter Property="BorderBrush" Value="{StaticResource PrimaryBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+
     </Application.Styles>
 </Application>

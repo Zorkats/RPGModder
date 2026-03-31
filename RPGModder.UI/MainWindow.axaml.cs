@@ -18,6 +18,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
+using Avalonia;
+using RPGModder.UI.Dialogs;
 
 namespace RPGModder.UI;
 
@@ -30,6 +32,7 @@ public partial class MainWindow : Window
     private string _gameExePath = "";
     private bool _hasPendingChanges = false;
 
+
     // Services
     private readonly ModPackerService _packer = new();
     private readonly ModInstallerService _installer = new();
@@ -40,6 +43,7 @@ public partial class MainWindow : Window
     private readonly SteamLaunchService _steamLauncher = new();
     private readonly UpdateService _updater = new();
     private readonly DownloadManager _downloadManager = new();
+    private const string NexusAppSlug = "zorkats2-rpgmodder";
     private PackerResult? _currentAnalysis;
     private string? _tempExtractPath;
     private CancellationTokenSource? _scanCts;
@@ -80,6 +84,8 @@ public partial class MainWindow : Window
         MenuInstallFolder.Click += MenuInstallFolder_Click;
         BtnLaunchGame.Click += BtnLaunchGame_Click;
         BtnRebuild.Click += BtnRebuild_Click;
+        BtnFhmmHelp.Click += BtnFhmmHelp_Click;
+        BtnTyHelp.Click += BtnTyHelp_Click;
         BtnOpenGameFolder.Click += BtnOpenGameFolder_Click;
         DropZone.AddHandler(DragDrop.DropEvent, DropZone_Drop);
         DropZone.AddHandler(DragDrop.DragOverEvent, DropZone_DragOver);
@@ -96,6 +102,9 @@ public partial class MainWindow : Window
         BtnAnalyze.Click += BtnAnalyze_Click;
         BtnGeneratePackage.Click += BtnGeneratePackage_Click;
 
+        // Initialize Mod Profiles
+        InitializeProfiles();
+
         // Phase 1.2: Search
         TxtSearch.TextChanged += TxtSearch_TextChanged;
         BtnClearSearch.Click += BtnClearSearch_Click;
@@ -104,6 +113,15 @@ public partial class MainWindow : Window
         CtxOpenFolder.Click += CtxOpenFolder_Click;
         CtxViewManifest.Click += CtxViewManifest_Click;
         CtxViewConflicts.Click += CtxViewConflicts_Click;
+        CtxLinkNexus.Click += CtxLinkNexus_Click;
+        CtxCheckUpdate.Click += CtxCheckUpdate_Click;
+        CtxDownloadUpdate.Click += CtxDownloadUpdate_Click;
+        LstMods.SelectionChanged += (s, e) => {
+            if (LstMods.SelectedItem is ModListItem mod) {
+                CtxDownloadUpdate.IsVisible = mod.UpdateAvailable;
+                CtxCheckUpdate.IsVisible = mod.Manifest?.Metadata?.NexusId != null && mod.Manifest.Metadata.NexusId > 0;
+            }
+        };
         CtxEnable.Click += CtxEnable_Click;
         CtxDisable.Click += CtxDisable_Click;
         CtxRemove.Click += CtxRemove_Click;
@@ -119,28 +137,29 @@ public partial class MainWindow : Window
 
         // Phase 2: Nexus Mods
         BtnNexusConnect.Click += BtnNexusConnect_Click;
-        BtnNexusSearch.Click += BtnNexusSearch_Click;
-        TxtNexusSearch.KeyDown += TxtNexusSearch_KeyDown;
         BtnSaveNexusKey.Click += BtnSaveNexusKey_Click;
+        BtnDisconnectNexus.Click += BtnDisconnectNexus_Click;
+        BtnUpgradeSso.Click += (s, e) => BtnNexusConnect_Click(s, e);
+        BtnDismissMigration.Click += (s, e) => BdrMigrationBanner.IsVisible = false;
         BtnRegisterNxm.Click += BtnRegisterNxm_Click;
         BtnLinkNexusGame.Click += BtnLinkNexusGame_Click;
         BtnSearchNexusGame.Click += BtnSearchNexusGame_Click;
         BtnCancelLinkGame.Click += BtnCancelLinkGame_Click;
         TxtNexusGameSearch.KeyDown += TxtNexusGameSearch_KeyDown;
-        BtnNexusAll.Click += BtnNexusAll_Click;
-        BtnNexusLatest.Click += BtnNexusLatest_Click;
-        BtnNexusTrending.Click += BtnNexusTrending_Click;
-        BtnNexusUpdated.Click += BtnNexusUpdated_Click;
-        BtnNexusRefresh.Click += BtnNexusRefresh_Click;
+        BtnNexusSearch.Click += BtnNexusSearch_Click;
+        TxtNexusSearch.KeyDown += TxtNexusSearch_KeyDown;
+        CmbNexusCategories.SelectionChanged += (s, e) => { if (!_isProgrammaticCategoryChange) _ = LoadNexusModsAsync(false); };
+        CmbNexusSort.SelectionChanged += (s, e) => _ = LoadNexusModsAsync(false);
+        BtnNexusRefresh.Click += async (s, e) => await LoadNexusModsAsync(false);
         LstNexusMods.ItemsSource = NexusMods;
 
         // Game detector events
         _gameDetector.GameFound += OnGameFound;
         _gameDetector.ScanComplete += OnScanComplete;
-        
+
         // NXM protocol IPC - receive URLs from other instances
         Program.NxmUrlReceived += OnNxmUrlReceived;
-        
+
         // Handle initial NXM URL passed via command line
         Opened += async (s, e) =>
         {
@@ -154,16 +173,14 @@ public partial class MainWindow : Window
         // Load cached games
         LoadCachedGames();
 
-        // Initialize Mod Profiles
-        InitializeProfiles();
-
         // Initialize Nexus state
         InitializeNexusState();
+
 
         // Initialize Auto-Updater
         CheckUpdatesOnStartup();
     }
-    
+
     private async void OnNxmUrlReceived(string url)
     {
         // Dispatch to UI thread
@@ -173,11 +190,11 @@ public partial class MainWindow : Window
             Activate();
             Topmost = true;
             Topmost = false;
-            
+
             await HandleNxmUrl(url);
         });
     }
-    
+
     private async Task HandleNxmUrl(string url)
     {
         if (!url.StartsWith("nxm://", StringComparison.OrdinalIgnoreCase))
@@ -248,22 +265,22 @@ public partial class MainWindow : Window
     private void LoadCachedGames()
     {
         UpdateCachedGamesCount();
-        
+
         if (_settings.CachedGames.Count > 0)
         {
             foreach (var game in _settings.CachedGames)
             {
                 DetectedGames.Add(game);
             }
-            
+
             CmbDetectedGames.IsVisible = true;
             TxtGamePath.IsVisible = false;
             SetStatus($"Loaded {DetectedGames.Count} cached game(s). Click 🔍 to scan for more.", true);
-            
+
             // Auto-select last used game
             if (!string.IsNullOrEmpty(_settings.Settings.LastGamePath))
             {
-                var lastGame = DetectedGames.FirstOrDefault(g => 
+                var lastGame = DetectedGames.FirstOrDefault(g =>
                     g.ExePath.Equals(_settings.Settings.LastGamePath, StringComparison.OrdinalIgnoreCase));
                 if (lastGame != null)
                 {
@@ -312,13 +329,13 @@ public partial class MainWindow : Window
             {
                 DetectedGames.Add(game);
             }
-            
+
             if (DetectedGames.Count == 1)
             {
                 CmbDetectedGames.IsVisible = true;
                 TxtGamePath.IsVisible = false;
             }
-            
+
             SetStatus($"Found {DetectedGames.Count} game(s)...", true);
         });
     }
@@ -359,6 +376,60 @@ public partial class MainWindow : Window
 
     #region Game Selection & Initialization
 
+    private void EvaluateModLoaderEnvironment()
+    {
+        if (string.IsNullOrEmpty(_gameRoot))
+        {
+            BadgeFhmm.IsVisible = false;
+            BadgeTy.IsVisible = false;
+            return;
+        }
+
+        bool isFhmm = false;
+        bool isTy = false;
+
+        // We check the deployed index.html to accurately reflect what is physically currently built
+        string contentPath = _engine?.ContentPath ?? _gameRoot;
+        string indexHtml = Path.Combine(contentPath, "index.html");
+
+        if (File.Exists(indexHtml))
+        {
+            string content = File.ReadAllText(indexHtml);
+            if (content.Contains("mattieFMModLoader.js", StringComparison.OrdinalIgnoreCase) ||
+                content.Contains("MATTIE", StringComparison.OrdinalIgnoreCase))
+            {
+                isFhmm = true;
+            }
+            if (content.Contains("TY_ModLoader", StringComparison.OrdinalIgnoreCase))
+            {
+                isTy = true;
+            }
+        }
+
+        BadgeFhmm.IsVisible = isFhmm;
+        BadgeTy.IsVisible = isTy;
+    }
+
+    private async void BtnFhmmHelp_Click(object? sender, RoutedEventArgs e)
+    {
+        await new RPGModder.UI.Dialogs.MessageBox(
+            "FHMM Compatibility",
+            "RPGModder safely manages Mattie's Fear & Hunger Mod Manager (FHMM) as a standard mod to protect your base game files.\n\n" +
+            "DO NOT run the FHMM .exe installer directly on your game folder. Instead, ZIP the FHMM files and install them " +
+            "through RPGModder like any other mod. We dynamically inject the mod loader when you click 'Apply Changes'."
+        ).ShowDialog(this);
+    }
+
+    private async void BtnTyHelp_Click(object? sender, RoutedEventArgs e)
+    {
+        await new RPGModder.UI.Dialogs.MessageBox(
+            "TY Mod Loader Compatibility",
+            "RPGModder has safely deployed Toby Yasha's Mod Loader.\n\n" +
+            "Just like FHMM, it is dynamically injected into your game when you click 'Apply Changes' and completely " +
+            "removed to protect your game files when you disable it."
+        ).ShowDialog(this);
+    }
+
     private async void BtnSelect_Click(object? sender, RoutedEventArgs e)
     {
         var topLevel = TopLevel.GetTopLevel(this);
@@ -386,11 +457,11 @@ public partial class MainWindow : Window
             }
 
             string gameName = Path.GetFileNameWithoutExtension(path);
-            
+
             // Add to detected games if not already there
-            var existingGame = DetectedGames.FirstOrDefault(g => 
+            var existingGame = DetectedGames.FirstOrDefault(g =>
                 g.ExePath.Equals(path, StringComparison.OrdinalIgnoreCase));
-            
+
             if (existingGame == null)
             {
                 var newGame = new DetectedGame
@@ -402,7 +473,7 @@ public partial class MainWindow : Window
                 };
                 DetectedGames.Add(newGame);
                 _settings.AddGame(newGame);
-                
+
                 CmbDetectedGames.IsVisible = true;
                 TxtGamePath.IsVisible = false;
                 CmbDetectedGames.SelectedItem = newGame;
@@ -420,7 +491,7 @@ public partial class MainWindow : Window
         {
             // Clear previous state
             ClearGameState();
-            
+
             string dir = Path.GetDirectoryName(exePath)!;
 
             _gameRoot = dir;
@@ -438,11 +509,9 @@ public partial class MainWindow : Window
                 return;
             }
             TxtGamePath.Text = exePath;
-            TxtGameName.Text = gameName;
-            GameBadge.IsVisible = true;
 
             SetStatus("Initializing Safe State...", true);
-            
+
             _engine = new ModEngine(exePath);
             await System.Threading.Tasks.Task.Run(() => _engine.InitializeSafeState());
 
@@ -456,9 +525,14 @@ public partial class MainWindow : Window
                 ).ShowDialog(this);
             }
 
-            _profile = new ModProfile();
-            LoadProfile();
-            RefreshProfileList(); // Scan for existing profiles now that _gameRoot is set
+            // --- FIX: READ ACTUAL ACTIVE PROFILE STATE ---
+            string actualActiveProfile = GetActiveProfileMarker();
+            _currentProfileName = actualActiveProfile;
+
+            // Load the JSON data for the profile currently sitting in the live directory
+            LoadProfileDataOnly(actualActiveProfile);
+
+            RefreshProfileList(); // Updates the UI dropdown to match reality
             RefreshModList();
 
             BtnInstallMod.IsEnabled = true;
@@ -472,9 +546,12 @@ public partial class MainWindow : Window
             _settings.Save();
 
             SetStatus($"Loaded: {gameName} ({(isMZ ? "MZ" : "MV")})", true);
-            
+
+            EvaluateModLoaderEnvironment();
+
             // Detect and link Nexus game
             await DetectNexusGame();
+            _ = RunBackgroundUpdateCheckAsync();
         }
         catch (Exception ex)
         {
@@ -490,10 +567,10 @@ public partial class MainWindow : Window
         _gameRoot = "";
         _gameExePath = "";
         _hasPendingChanges = false;
-        
+
         // Cancel any in-flight Nexus operations
         _nexusCts?.Cancel();
-        
+
         // Clear Nexus game state
         _currentNexusGame = null;
         _detectedGameName = "";
@@ -502,30 +579,29 @@ public partial class MainWindow : Window
         TxtNexusSearch.IsEnabled = false;
         BtnNexusSearch.IsEnabled = false;
         BtnLinkNexusGame.IsEnabled = false;
-        BtnNexusAll.IsEnabled = false;
-        BtnNexusLatest.IsEnabled = false;
-        BtnNexusTrending.IsEnabled = false;
-        BtnNexusUpdated.IsEnabled = false;
-        BtnNexusRefresh.IsEnabled = false;
-        
+        if (CmbNexusCategories != null) CmbNexusCategories.IsEnabled = false;
+        if (CmbNexusSort != null) CmbNexusSort.IsEnabled = false;
+        if (BtnNexusRefresh != null) BtnNexusRefresh.IsEnabled = false;
+
         // Clear mod lists
         foreach (var mod in _allMods)
             mod.PropertyChanged -= ModItem_PropertyChanged;
         _allMods.Clear();
         InstalledMods.Clear();
-        
+
         // Clear search
         TxtSearch.Text = "";
         _searchFilter = "";
-        
+
         PendingChangesIndicator.IsVisible = false;
         PlaceholderText.IsVisible = true;
-        
+
         BtnInstallMod.IsEnabled = false;
         BtnLaunchGame.IsEnabled = false;
         BtnRebuild.IsEnabled = false;
         BtnOpenGameFolder.IsEnabled = false;
-        
+
+        _updateCheckCts?.Cancel();
         UpdateModCounts();
     }
 
@@ -643,7 +719,7 @@ public partial class MainWindow : Window
         }
         _allMods.Clear();
         InstalledMods.Clear();
-        
+
         string modsRoot = Path.Combine(_gameRoot, "Mods");
         if (!Directory.Exists(modsRoot))
         {
@@ -677,7 +753,7 @@ public partial class MainWindow : Window
 
         // Sort by load order from profile, new mods go to the end
         var orderedMods = new List<ModListItem>();
-        
+
         // First add mods in profile order
         foreach (var folderName in _profile.LoadOrder)
         {
@@ -688,7 +764,7 @@ public partial class MainWindow : Window
                 loadedMods.Remove(mod);
             }
         }
-        
+
         // Add any remaining mods (new installs) at the end
         orderedMods.AddRange(loadedMods);
 
@@ -769,15 +845,17 @@ public partial class MainWindow : Window
 
             await System.Threading.Tasks.Task.Run(() => _engine.RebuildGame(_profile));
 
+            EvaluateModLoaderEnvironment();
+
             // Build status message
             string statusMsg = $"Rebuild complete! {_profile.EnabledMods.Count} mod(s) active.";
-            
+
             // Report merging results if enabled
             if (_engine.UseMerging && _engine.LastMergeReports.Count > 0)
             {
                 int totalMerged = _engine.LastMergeReports.Sum(r => r.MergedRecords);
                 int totalConflicts = _engine.LastMergeReports.Sum(r => r.Conflicts.Count);
-                
+
                 if (totalMerged > 0 || totalConflicts > 0)
                 {
                     statusMsg += $" (Merged: {totalMerged} records";
@@ -818,7 +896,7 @@ public partial class MainWindow : Window
         {
             var launchMethod = _steamLauncher.GetLaunchMethodName(_gameRoot, _detectedGameName);
             var success = _steamLauncher.LaunchGame(_gameExePath, _gameRoot, _detectedGameName, preferSteam: true);
-            
+
             if (success)
             {
                 SetStatus($"Game launched via {launchMethod}!", true);
@@ -1041,20 +1119,25 @@ public partial class MainWindow : Window
 
             DetectedChanges.Clear();
 
+            var successBrush = (IBrush)Application.Current!.Resources["SuccessBrush"]!;
+            var warningBrush = (IBrush)Application.Current!.Resources["WarningBrush"]!;
+            var dangerBrush = (IBrush)Application.Current!.Resources["DangerBrush"]!;
+            var primaryBrush = (IBrush)Application.Current!.Resources["PrimaryBrush"]!;
+
             foreach (var (path, _) in _currentAnalysis.NewFiles)
-                DetectedChanges.Add(new ChangeItem("NEW", path, "#4CAF50"));
+                DetectedChanges.Add(new ChangeItem("NEW", path, ((SolidColorBrush)successBrush).Color.ToString()));
 
             foreach (var (path, _) in _currentAnalysis.ModifiedFiles)
-                DetectedChanges.Add(new ChangeItem("MOD", path, "#FF9800"));
+                DetectedChanges.Add(new ChangeItem("MOD", path, ((SolidColorBrush)warningBrush).Color.ToString()));
 
             foreach (var (path, _) in _currentAnalysis.JsonPatches)
-                DetectedChanges.Add(new ChangeItem("PATCH", path, "#2196F3"));
+                DetectedChanges.Add(new ChangeItem("PATCH", path, ((SolidColorBrush)primaryBrush).Color.ToString()));
 
             foreach (var plugin in _currentAnalysis.NewPlugins)
-                DetectedChanges.Add(new ChangeItem("PLUGIN", plugin.Name, "#9C27B0"));
+                DetectedChanges.Add(new ChangeItem("PLUGIN", plugin.Name, "#9C27B0")); // Keep purple for plugins
 
             foreach (var warning in _currentAnalysis.Warnings)
-                DetectedChanges.Add(new ChangeItem("WARN", warning, "#FFC107"));
+                DetectedChanges.Add(new ChangeItem("WARN", warning, ((SolidColorBrush)warningBrush).Color.ToString()));
 
             TxtChangeCount.Text = $"{_currentAnalysis.TotalChanges} changes";
             MetadataPanel.IsVisible = _currentAnalysis.TotalChanges > 0;
@@ -1159,29 +1242,190 @@ public partial class MainWindow : Window
 
     #endregion
 
-    #region Profile Management
+    #region Mod Profiles
 
-    private void LoadProfile()
+    // --- State Persistence Helpers ---
+    private string GetActiveProfileMarker()
     {
-        string profilePath = Path.Combine(_gameRoot, "profile.json");
-        if (File.Exists(profilePath))
+        if (string.IsNullOrEmpty(_gameRoot)) return "Default";
+        string markerPath = Path.Combine(_gameRoot, "ModManager_Backups", "active_profile.txt");
+        if (File.Exists(markerPath))
         {
-            try
-            {
-                var data = JsonConvert.DeserializeObject<ModProfile>(File.ReadAllText(profilePath));
-                if (data != null) _profile = data;
-            }
+            return File.ReadAllText(markerPath).Trim();
+        }
+        return "Default";
+    }
+
+    private void SetActiveProfileMarker(string profileName)
+    {
+        if (string.IsNullOrEmpty(_gameRoot)) return;
+        string markerDir = Path.Combine(_gameRoot, "ModManager_Backups");
+        Directory.CreateDirectory(markerDir);
+        File.WriteAllText(Path.Combine(markerDir, "active_profile.txt"), profileName);
+    }
+
+    // --- Core Data Methods ---
+    private void LoadProfileDataOnly(string profileName)
+    {
+        string filename = profileName == "Default" ? "profile.json" : $"mod_profile_{profileName}.json";
+        string path = Path.Combine(_gameRoot, filename);
+
+        if (File.Exists(path))
+        {
+            try { _profile = JsonConvert.DeserializeObject<ModProfile>(File.ReadAllText(path)) ?? new ModProfile(); }
             catch { _profile = new ModProfile(); }
+        }
+        else
+        {
+            _profile = new ModProfile();
         }
     }
 
     private void SaveProfile()
     {
-        // Update load order from current _allMods list
         _profile.LoadOrder = _allMods.Select(m => m.FolderName).ToList();
-        
-        string profilePath = Path.Combine(_gameRoot, "profile.json");
+
+        // FIX: Dynamically target the correct profile file instead of hardcoding "profile.json"
+        string filename = _currentProfileName == "Default" ? "profile.json" : $"mod_profile_{_currentProfileName}.json";
+        string profilePath = Path.Combine(_gameRoot, filename);
+
         File.WriteAllText(profilePath, JsonConvert.SerializeObject(_profile, Formatting.Indented));
+    }
+
+    // --- UI & Swapping Logic ---
+    private void InitializeProfiles()
+    {
+        RefreshProfileList();
+        CboProfiles.SelectionChanged += CboProfiles_SelectionChanged;
+        BtnAddProfile.Click += BtnAddProfile_Click;
+        BtnSaveProfile.Click += BtnSaveProfile_Click;
+        BtnRemoveProfile.Click += BtnRemoveProfile_Click;
+    }
+
+    private void RefreshProfileList()
+    {
+        if (string.IsNullOrEmpty(_gameRoot)) return;
+
+        var profiles = Directory.GetFiles(_gameRoot, "mod_profile_*.json")
+                                .Select(f => Path.GetFileNameWithoutExtension(f).Replace("mod_profile_", ""))
+                                .ToList();
+
+        if (!profiles.Contains("Default")) profiles.Insert(0, "Default");
+
+        CboProfiles.ItemsSource = profiles;
+
+        // Force UI to match internal state without triggering a reload
+        if (profiles.Contains(_currentProfileName))
+            CboProfiles.SelectedItem = _currentProfileName;
+        else
+            CboProfiles.SelectedItem = "Default";
+    }
+
+    private void CboProfiles_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (CboProfiles.SelectedItem is string profileName)
+        {
+            if (profileName == _currentProfileName) return;
+            LoadProfile(profileName);
+        }
+    }
+
+    private void LoadProfile(string newProfileName)
+    {
+        if (_engine == null) return;
+
+        if (_currentProfileName != newProfileName)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(_gameRoot))
+                {
+                    SetStatus($"Swapping saves: {_currentProfileName} ➡ {newProfileName}...", true);
+                    _engine.SwapSaveFiles(_currentProfileName, newProfileName);
+
+                    _currentProfileName = newProfileName;
+                    SetActiveProfileMarker(newProfileName);
+                }
+            }
+            catch (Exception ex)
+            {
+                SetStatus($"Error swapping saves: {ex.Message}", false);
+                return;
+            }
+        }
+
+        LoadProfileDataOnly(newProfileName);
+        RefreshModList();
+        SetStatus($"Profile switched to '{newProfileName}'.", true);
+    }
+
+    private async void BtnAddProfile_Click(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new TextInputDialog("New Profile", "Enter profile name (e.g. Hardcore)");
+        var resultName = await dialog.ShowDialog<string?>(this);
+
+        if (!string.IsNullOrWhiteSpace(resultName))
+        {
+            string cleanName = string.Join("", resultName.Split(Path.GetInvalidFileNameChars()));
+
+            _profile.EnabledMods = _allMods.Where(m => m.IsEnabled).Select(m => m.FolderName).ToList();
+            _profile.LoadOrder = _allMods.Select(m => m.FolderName).ToList();
+
+            string path = Path.Combine(_gameRoot, $"mod_profile_{cleanName}.json");
+            File.WriteAllText(path, JsonConvert.SerializeObject(_profile, Formatting.Indented));
+
+            RefreshProfileList();
+            CboProfiles.SelectedItem = cleanName;
+
+            SetStatus($"Profile '{cleanName}' created.", true);
+        }
+    }
+
+    private async void BtnSaveProfile_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _profile.EnabledMods = _allMods.Where(m => m.IsEnabled).Select(m => m.FolderName).ToList();
+            _profile.LoadOrder = _allMods.Select(m => m.FolderName).ToList();
+
+            SaveProfile(); // Uses the newly fixed dynamic helper
+
+            var msg = new RPGModder.UI.Dialogs.MessageBox("Success", $"Profile '{_currentProfileName}' saved successfully!");
+            await msg.ShowDialog(this);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Failed to save profile: {ex.Message}", false);
+        }
+    }
+
+    private async void BtnRemoveProfile_Click(object? sender, RoutedEventArgs e)
+    {
+        string currentProfile = CboProfiles.SelectedItem?.ToString() ?? "Default";
+
+        if (currentProfile == "Default")
+        {
+            await new RPGModder.UI.Dialogs.MessageBox("Error", "You cannot delete the Default profile.").ShowDialog(this);
+            return;
+        }
+
+        var confirm = new RPGModder.UI.Dialogs.MessageBox("Confirm Delete",
+            $"Are you sure you want to delete profile '{currentProfile}'?\nThis will switch you back to Default.", true);
+
+        var result = await confirm.ShowDialog<bool>(this);
+
+        if (result)
+        {
+            string filename = $"mod_profile_{currentProfile}.json";
+            string path = Path.Combine(_gameRoot, filename);
+
+            if (File.Exists(path)) File.Delete(path);
+
+            RefreshProfileList();
+            CboProfiles.SelectedItem = "Default";
+
+            SetStatus($"Profile '{currentProfile}' deleted.", true);
+        }
     }
 
     #endregion
@@ -1221,6 +1465,188 @@ public partial class MainWindow : Window
 
         UpdateModCounts();
         PlaceholderText.IsVisible = InstalledMods.Count == 0 && _allMods.Count == 0;
+    }
+
+    #endregion
+
+    #region Helpers for Mod Updating
+
+    private CancellationTokenSource? _updateCheckCts;
+
+    private async Task RunBackgroundUpdateCheckAsync()
+    {
+        if (!_nexus.IsAuthenticated) return;
+
+        _updateCheckCts?.Cancel();
+        _updateCheckCts = new CancellationTokenSource();
+        var token = _updateCheckCts.Token;
+
+        // Give the UI 3 seconds to breathe before hammering the network
+        await Task.Delay(3000, token);
+
+        // Snapshot the list to prevent enumeration crashes if the user is moving mods
+        var modsToCheck = _allMods.ToList();
+
+        foreach (var mod in modsToCheck)
+        {
+            if (token.IsCancellationRequested) break;
+
+            // Only check mods that have a valid Nexus ID in their mod.json
+            if (mod.Manifest?.Metadata?.NexusId != null && mod.Manifest.Metadata.NexusId > 0)
+            {
+                try
+                {
+                    var gameDomain = _currentNexusGame?.NexusDomain ?? NexusApiService.GetKnownGameDomain(_detectedGameName);
+                    if (string.IsNullOrEmpty(gameDomain)) continue;
+
+                    var modInfo = await _nexus.GetModAsync(gameDomain, mod.Manifest.Metadata.NexusId.Value, token);
+
+                    if (modInfo != null && VersionComparer.IsNewerVersion(mod.Version, modInfo.Version))
+                    {
+                        Dispatcher.UIThread.Post(() => {
+                            mod.UpdateAvailable = true;
+                            mod.LatestVersion = modInfo.Version;
+                            // If this item is currently selected, reveal the context menu button
+                            if (LstMods.SelectedItem == mod) CtxDownloadUpdate.IsVisible = true;
+                        });
+                    }
+                }
+                catch { /* Silent fail on network errors */ }
+
+                // CRITICAL: 500ms delay to respect Nexus API rate limits
+                await Task.Delay(500, token);
+            }
+        }
+    }
+
+    private async void CtxLinkNexus_Click(object? sender, RoutedEventArgs e)
+    {
+        var mod = GetSelectedMod();
+        if (mod == null) return;
+
+        if (!_nexus.IsAuthenticated)
+        {
+            SetStatus("Connect to Nexus first to use the Mod Linker.", false);
+            return;
+        }
+
+        var domain = _currentNexusGame?.NexusDomain ?? NexusApiService.GetKnownGameDomain(_detectedGameName);
+        if (string.IsNullOrEmpty(domain))
+        {
+            SetStatus("Link your game to Nexus first to use the Mod Linker.", false);
+            return;
+        }
+
+        var dialog = new ModLinkWindow(_nexus, domain, mod.Name);
+        var result = await dialog.ShowDialog<bool>(this);
+
+        if (result && dialog.SelectedMod != null)
+        {
+            mod.Manifest.Metadata.NexusId = dialog.SelectedMod.ModId;
+
+            // Save to mod.json
+            string modsDir = Path.Combine(_gameRoot, "Mods", mod.FolderName);
+            string jsonPath = Path.Combine(modsDir, "mod.json");
+
+            if (File.Exists(jsonPath))
+            {
+                File.WriteAllText(jsonPath, JsonConvert.SerializeObject(mod.Manifest, Formatting.Indented));
+                SetStatus($"Linked '{mod.Name}' to '{dialog.SelectedMod.Name}' (ID {dialog.SelectedMod.ModId})", true);
+
+                // Trigger an immediate update check for this mod
+                _ = RunBackgroundUpdateCheckAsync();
+            }
+        }
+    }
+    private async void CtxCheckUpdate_Click(object? sender, RoutedEventArgs e)
+    {
+        var mod = GetSelectedMod();
+        if (mod == null || mod.Manifest?.Metadata?.NexusId == null) return;
+
+        if (!_nexus.IsAuthenticated)
+        {
+            SetStatus("Connect to Nexus first to check for updates.", false);
+            return;
+        }
+
+        SetStatus($"Checking for updates for {mod.Name}...", true);
+        await RunSingleUpdateCheckAsync(mod);
+    }
+
+    private async Task RunSingleUpdateCheckAsync(ModListItem mod)
+    {
+        if (mod.Manifest?.Metadata?.NexusId == null) return;
+
+        try
+        {
+            var gameDomain = _currentNexusGame?.NexusDomain ?? NexusApiService.GetKnownGameDomain(_detectedGameName);
+            if (string.IsNullOrEmpty(gameDomain))
+            {
+                SetStatus("Game not linked to Nexus. Update check aborted.", false);
+                return;
+            }
+
+            var modInfo = await _nexus.GetModAsync(gameDomain, mod.Manifest.Metadata.NexusId.Value);
+
+            if (modInfo != null)
+            {
+                if (VersionComparer.IsNewerVersion(mod.Version, modInfo.Version))
+                {
+                    mod.UpdateAvailable = true;
+                    mod.LatestVersion = modInfo.Version;
+                    if (LstMods.SelectedItem == mod) CtxDownloadUpdate.IsVisible = true;
+                    SetStatus($"Update found for {mod.Name}: v{modInfo.Version}", true);
+                }
+                else
+                {
+                    mod.UpdateAvailable = false;
+                    if (LstMods.SelectedItem == mod) CtxDownloadUpdate.IsVisible = false;
+                    SetStatus($"{mod.Name} is already up to date (v{mod.Version}).", true);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Update check failed for {mod.Name}: {ex.Message}", false);
+        }
+    }
+
+    private async void CtxDownloadUpdate_Click(object? sender, RoutedEventArgs e)
+    {
+        var mod = GetSelectedMod();
+        if (mod == null || !mod.UpdateAvailable || mod.Manifest?.Metadata?.NexusId == null) return;
+
+        var gameDomain = _currentNexusGame?.NexusDomain ?? NexusApiService.GetKnownGameDomain(_detectedGameName);
+        if (string.IsNullOrEmpty(gameDomain)) return;
+
+        SetStatus($"Preparing update for {mod.Name}...", true);
+
+        // Fetch the newest files
+        var files = await _nexus.GetModFilesAsync(gameDomain, mod.Manifest.Metadata.NexusId.Value);
+        var mainFile = files.FirstOrDefault(f => f.IsPrimary) ?? files.FirstOrDefault();
+
+        if (mainFile == null)
+        {
+            SetStatus("No files found on Nexus for this update.", false);
+            return;
+        }
+
+        var links = await _nexus.GetDownloadLinksAsync(gameDomain, mod.Manifest.Metadata.NexusId.Value, mainFile.FileId);
+
+        if (links.Count == 0)
+        {
+            SetStatus("Cannot download automatically (Nexus Premium required). Right-click and 'View on Nexus'.", false);
+            return;
+        }
+
+        var nexusModInfo = new NexusMod { ModId = mod.Manifest.Metadata.NexusId.Value, Name = mod.Name, Version = mod.LatestVersion, DomainName = gameDomain };
+
+        // Hide the update badge immediately
+        mod.UpdateAvailable = false;
+        if (LstMods.SelectedItem == mod) CtxDownloadUpdate.IsVisible = false;
+
+        // Hand off to your existing installer, which will cleanly overwrite the old folder
+        await DownloadAndInstallMod(links[0].Uri, mainFile.FileName ?? $"{mod.Name}.zip", nexusModInfo);
     }
 
     #endregion
@@ -1317,7 +1743,7 @@ public partial class MainWindow : Window
 
         // Refresh display
         ApplySearchFilter();
-        
+
         // Re-select the moved item
         LstMods.SelectedItem = mod;
 
@@ -1346,7 +1772,7 @@ public partial class MainWindow : Window
 
         // Refresh display
         ApplySearchFilter();
-        
+
         // Re-select the moved item
         LstMods.SelectedItem = mod;
 
@@ -1380,175 +1806,6 @@ public partial class MainWindow : Window
 
     #endregion
 
-    #region Mod Profiles
-
-    private void InitializeProfiles()
-    {
-        RefreshProfileList();
-        _currentProfileName = CboProfiles.SelectedItem?.ToString() ?? "Default";
-        CboProfiles.SelectionChanged += CboProfiles_SelectionChanged;
-        BtnAddProfile.Click += BtnAddProfile_Click;
-        BtnSaveProfile.Click += BtnSaveProfile_Click;
-        BtnRemoveProfile.Click += BtnRemoveProfile_Click;
-    }
-
-    private void RefreshProfileList()
-    {
-        if (string.IsNullOrEmpty(_gameRoot)) return;
-
-        var profiles = Directory.GetFiles(_gameRoot, "mod_profile_*.json")
-                                .Select(f => Path.GetFileNameWithoutExtension(f).Replace("mod_profile_", ""))
-                                .ToList();
-
-        if (!profiles.Contains("Default")) profiles.Insert(0, "Default");
-
-        var current = CboProfiles.SelectedItem?.ToString() ?? "Default";
-
-        CboProfiles.ItemsSource = profiles;
-        CboProfiles.SelectedItem = profiles.Contains(current) ? current : "Default";
-    }
-
-    private void CboProfiles_SelectionChanged(object? sender, SelectionChangedEventArgs e)
-    {
-        if (CboProfiles.SelectedItem is string profileName)
-        {
-            // Prevent reloading if clicking the same one
-            if (profileName == _currentProfileName) return;
-
-            LoadProfile(profileName);
-            RefreshModList();
-        }
-    }
-
-    private async void BtnAddProfile_Click(object? sender, RoutedEventArgs e)
-    {
-        var dialog = new RPGModder.UI.Dialogs.TextInputDialog("New Profile", "Enter profile name (e.g. Hardcore)");
-        var result = await dialog.ShowDialog<bool>(this);
-
-        if (result && !string.IsNullOrWhiteSpace(dialog.ResultText))
-        {
-            string cleanName = string.Join("", dialog.ResultText.Split(Path.GetInvalidFileNameChars()));
-
-            // Save current configuration as this new profile
-            // Use _allMods for LoadOrder (all mods in order) and filter for EnabledMods
-            _profile.EnabledMods = _allMods.Where(m => m.IsEnabled).Select(m => m.FolderName).ToList();
-            _profile.LoadOrder = _allMods.Select(m => m.FolderName).ToList();
-
-            string path = Path.Combine(_gameRoot, $"mod_profile_{cleanName}.json");
-            File.WriteAllText(path, JsonConvert.SerializeObject(_profile, Formatting.Indented));
-
-            RefreshProfileList();
-            CboProfiles.SelectedItem = cleanName;
-
-            SetStatus($"Profile '{cleanName}' created.", true);
-        }
-    }
-
-    private async void BtnSaveProfile_Click(object? sender, RoutedEventArgs e)
-    {
-        string currentProfile = CboProfiles.SelectedItem?.ToString() ?? "Default";
-        string filename = currentProfile == "Default" ? "profile.json" : $"mod_profile_{currentProfile}.json";
-        string path = Path.Combine(_gameRoot, filename);
-
-        try
-        {
-            // 1. Capture current state
-            _profile.EnabledMods = InstalledMods
-                .Where(m => m.IsEnabled)
-                .Select(m => m.FolderName)
-                .ToList();
-
-            _profile.LoadOrder = InstalledMods
-                .Select(m => m.FolderName)
-                .ToList();
-
-            // 2. Write to disk
-            File.WriteAllText(path, JsonConvert.SerializeObject(_profile, Formatting.Indented));
-
-            var msg = new RPGModder.UI.Dialogs.MessageBox("Success", $"Profile '{currentProfile}' saved successfully!");
-            await msg.ShowDialog(this);
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"Failed to save profile: {ex.Message}", false);
-        }
-    }
-
-    private async void BtnRemoveProfile_Click(object? sender, RoutedEventArgs e)
-    {
-        string currentProfile = CboProfiles.SelectedItem?.ToString() ?? "Default";
-
-        if (currentProfile == "Default")
-        {
-            await new RPGModder.UI.Dialogs.MessageBox("Error", "You cannot delete the Default profile.").ShowDialog(this);
-            return;
-        }
-
-        var confirm = new RPGModder.UI.Dialogs.MessageBox("Confirm Delete",
-            $"Are you sure you want to delete profile '{currentProfile}'?\nThis will switch you back to Default.", true);
-
-        var result = await confirm.ShowDialog<bool>(this);
-
-        if (result)
-        {
-            string filename = $"mod_profile_{currentProfile}.json";
-            string path = Path.Combine(_gameRoot, filename);
-
-            if (File.Exists(path)) File.Delete(path);
-
-            // Reload list and force Default
-            RefreshProfileList();
-            CboProfiles.SelectedItem = "Default";
-
-            SetStatus($"Profile '{currentProfile}' deleted.", true);
-        }
-    }
-
-
-    private void LoadProfile(string newProfileName)
-    {
-        if (_engine == null) return;
-
-        // 1. SAVE SWAP
-        if (_currentProfileName != newProfileName)
-        {
-            try
-            {
-                // Only swap if the engine is ready
-                if (!string.IsNullOrEmpty(_gameRoot))
-                {
-                    SetStatus($"Swapping saves: {_currentProfileName} ➡ {newProfileName}...", true);
-                    _engine.SwapSaveFiles(_currentProfileName, newProfileName);
-                    _currentProfileName = newProfileName;
-                }
-            }
-            catch (Exception ex)
-            {
-                SetStatus($"Error swapping saves: {ex.Message}", false);
-                // Important: If swap fails, we might want to stop here to prevent
-                // loading the wrong mod list on top of the wrong saves.
-                return;
-            }
-        }
-
-        // 2. Load JSON (Existing Logic)
-        string filename = newProfileName == "Default" ? "profile.json" : $"mod_profile_{newProfileName}.json";
-        string path = Path.Combine(_gameRoot, filename);
-
-        if (File.Exists(path)) {
-            try {
-                _profile = JsonConvert.DeserializeObject<ModProfile>(File.ReadAllText(path)) ?? new ModProfile();
-            } catch { _profile = new ModProfile(); }
-        } else {
-            _profile = new ModProfile();
-        }
-
-        RefreshModList();
-        SetStatus($"Profile switched to '{newProfileName}'.", true);
-    }
-
-    #endregion
-
     #region Save Manager
 
     private async void BtnSaveManager_Click(object? sender, RoutedEventArgs e)
@@ -1561,6 +1818,7 @@ public partial class MainWindow : Window
     }
 
     #endregion
+
     #region Drag-Drop Reordering
 
     private ModListItem? _draggedMod;
@@ -1755,7 +2013,7 @@ public partial class MainWindow : Window
         {
             SetStatus("Resetting vanilla backup...", true);
             await System.Threading.Tasks.Task.Run(() => Directory.Delete(backupPath, true));
-            
+
             // Re-initialize
             if (_engine != null)
             {
@@ -1779,12 +2037,35 @@ public partial class MainWindow : Window
     {
         // Bind game results
         LstNexusGames.ItemsSource = NexusGameResults;
-        
+
         // Load saved API key
         if (!string.IsNullOrEmpty(_settings.Settings.NexusApiKey))
         {
-            TxtNexusApiKey.Text = _settings.Settings.NexusApiKey;
-            await ValidateAndConnectNexus(_settings.Settings.NexusApiKey);
+            // Decrypt the key loaded from disk using our new service
+            var ssoService = new NexusSsoService(NexusAppSlug);
+            string plainKey = ssoService.DecryptKeyFromStorage(_settings.Settings.NexusApiKey);
+
+            if (!string.IsNullOrEmpty(plainKey))
+            {
+                TxtNexusApiKey.Text = plainKey;
+                await ValidateAndConnectNexus(plainKey);
+
+                // If they have a key but it wasn't via SSO, show the migration banner
+                if (!_settings.Settings.IsSsoAuthenticated)
+                {
+                    BdrMigrationBanner.IsVisible = true;
+                }
+                else
+                {
+                    // UI Polish: Make it look nice for SSO users
+                    TxtNexusApiKey.PasswordChar = '\0';
+                    TxtNexusApiKey.Text = "Connected via One-Click SSO";
+                    TxtNexusApiKey.IsReadOnly = true;
+                    TxtNexusApiKey.Foreground = new SolidColorBrush(Color.Parse("#4EC9B0"));
+                    BtnSaveNexusKey.IsVisible = false;
+                    BtnDisconnectNexus.IsVisible = true;
+                }
+            }
         }
 
         // Check nxm protocol registration
@@ -1801,29 +2082,69 @@ public partial class MainWindow : Window
 
     private async void BtnNexusConnect_Click(object? sender, RoutedEventArgs e)
     {
-        // Show a simple input dialog or use the settings key
-        var apiKey = TxtNexusApiKey.Text?.Trim();
+        // Disable button to prevent spamming
+        BtnNexusConnect.IsEnabled = false;
         
-        if (string.IsNullOrEmpty(apiKey))
-        {
-            SetStatus("Enter your Nexus API key in Settings first.", false);
-            return;
-        }
+        if (Application.Current?.Resources.TryGetResource("WarningBrush", null, out var warningBrush) == true)
+            NexusAuthIndicator.Background = (IBrush)warningBrush!;
 
-        await ValidateAndConnectNexus(apiKey);
+        // Use the SSO Service with your requested app slug
+        var ssoService = new NexusSsoService(NexusAppSlug);
+
+        string? rawApiKey = await ssoService.AuthenticateAsync(status =>
+        {
+            // The WebSocket runs on a background thread, so we MUST marshal UI updates back to the main thread
+            Dispatcher.UIThread.Post(() =>
+            {
+                TxtNexusStatus.Text = status;
+                SetStatus(status, true);
+            });
+        });
+
+        if (!string.IsNullOrEmpty(rawApiKey))
+        {
+            string secureKey = ssoService.EncryptKeyForStorage(rawApiKey);
+            _settings.Settings.NexusApiKey = secureKey;
+            _settings.Settings.IsSsoAuthenticated = true;
+            _settings.Save();
+
+            // Hide migration banner since they just migrated
+            BdrMigrationBanner.IsVisible = false;
+
+            // Update the settings tab textbox to look nice for SSO users
+            TxtNexusApiKey.PasswordChar = '\0';
+            TxtNexusApiKey.Text = "Connected via One-Click SSO";
+            TxtNexusApiKey.IsReadOnly = true;
+            TxtNexusApiKey.Foreground = new SolidColorBrush(Color.Parse("#4EC9B0"));
+            BtnSaveNexusKey.IsVisible = false;
+            BtnDisconnectNexus.IsVisible = true;
+
+            // Proceed to validate and fetch user info
+            await ValidateAndConnectNexus(rawApiKey);
+        }
+        else
+        {
+            if (Application.Current?.Resources.TryGetResource("DangerBrush", null, out var dangerBrush) == true)
+                NexusAuthIndicator.Background = (IBrush)dangerBrush!;
+            
+            TxtNexusStatus.Text = "Login failed or timed out.";
+            BtnNexusConnect.IsEnabled = true;
+            SetStatus("Nexus SSO authentication failed or was cancelled.", false);
+        }
     }
 
-    private async Task ValidateAndConnectNexus(string apiKey)
+    private async System.Threading.Tasks.Task ValidateAndConnectNexus(string apiKey)
     {
         SetStatus("Connecting to Nexus Mods...", true);
-        NexusAuthIndicator.Background = new SolidColorBrush(Color.Parse("#FFB900")); // Yellow = connecting
-        TxtNexusStatus.Text = "Connecting...";
+        TxtNexusStatus.Text = "Authenticating...";
 
         var result = await _nexus.AuthenticateAsync(apiKey);
 
         if (result.Success && result.User != null)
         {
-            NexusAuthIndicator.Background = new SolidColorBrush(Color.Parse("#4EC9B0")); // Green
+            if (Application.Current?.Resources.TryGetResource("SuccessBrush", null, out var successBrush) == true)
+                NexusAuthIndicator.Background = (IBrush)successBrush!;
+            
             TxtNexusStatus.Text = $"Connected as {result.User.Name}" + (result.User.IsPremium ? " ⭐" : "");
             BtnNexusConnect.Content = "Connected";
             BtnNexusConnect.IsEnabled = false;
@@ -1833,24 +2154,19 @@ public partial class MainWindow : Window
             TxtNexusSearch.IsEnabled = hasLinkedGame;
             BtnNexusSearch.IsEnabled = hasLinkedGame;
             BtnLinkNexusGame.IsEnabled = !string.IsNullOrEmpty(_gameExePath);
-            
+
             // Enable category buttons
-            BtnNexusAll.IsEnabled = hasLinkedGame;
-            BtnNexusLatest.IsEnabled = hasLinkedGame;
-            BtnNexusTrending.IsEnabled = hasLinkedGame;
-            BtnNexusUpdated.IsEnabled = hasLinkedGame;
+            CmbNexusCategories.IsEnabled = hasLinkedGame;
+            CmbNexusSort.IsEnabled = hasLinkedGame;
             BtnNexusRefresh.IsEnabled = hasLinkedGame;
 
-            // Save the API key
-            _settings.Settings.NexusApiKey = apiKey;
-            _settings.Save();
-
             SetStatus($"Connected to Nexus as {result.User.Name}", true);
-            
+
             if (hasLinkedGame)
             {
                 TxtNexusResults.Text = "Search for mods above, or browse categories";
-                await LoadNexusModsAsync("all");
+                await FetchCategoriesForGame();
+                await LoadNexusModsAsync(false);
             }
             else if (!string.IsNullOrEmpty(_gameExePath))
             {
@@ -1863,205 +2179,160 @@ public partial class MainWindow : Window
         }
         else
         {
-            NexusAuthIndicator.Background = new SolidColorBrush(Color.Parse("#F44747")); // Red
+            if (Application.Current?.Resources.TryGetResource("DangerBrush", null, out var dangerBrush) == true)
+                NexusAuthIndicator.Background = (IBrush)dangerBrush!;
+            
             TxtNexusStatus.Text = "Connection failed";
-            BtnNexusConnect.Content = "Retry";
+            BtnNexusConnect.Content = "Connect"; // Changed from Retry to Connect for SSO
             BtnNexusConnect.IsEnabled = true;
 
             SetStatus($"Nexus connection failed: {result.Error}", false);
         }
     }
 
-    private string _currentNexusCategory = "all";
+    // ==========================================================
+    // NEXUS V2 BROWSE & PAGINATION ENGINE
+    // ==========================================================
+    private bool _isProgrammaticCategoryChange = false;
+    private int _currentOffset = 0;
+    private bool _hasNextPage = false;
+    private bool _isLoadingData = false;
+    private bool _isSearching = false;
 
-    private async Task LoadNexusModsAsync(string category)
+    private async Task FetchCategoriesForGame()
     {
+        var domain = GetSelectedNexusGameDomain();
+        if (string.IsNullOrEmpty(domain)) return;
+
+        var categories = await _nexus.GetCategoriesAsync(domain);
+
+        _isProgrammaticCategoryChange = true;
+        var allCats = new List<NexusCategory> { new NexusCategory { CategoryId = -1, Name = "All Categories" } };
+        allCats.AddRange(categories);
+
+        CmbNexusCategories.ItemsSource = allCats;
+        CmbNexusCategories.SelectedIndex = 0;
+        CmbNexusCategories.IsEnabled = true;
+        CmbNexusSort.IsEnabled = true;
+        BtnNexusRefresh.IsEnabled = true;
+        _isProgrammaticCategoryChange = false;
+    }
+
+    private async Task LoadNexusModsAsync(bool loadMore = false)
+    {
+        if (_isLoadingData && loadMore) return;
+        _isLoadingData = true;
+
         var gameDomain = GetSelectedNexusGameDomain();
         if (string.IsNullOrEmpty(gameDomain))
         {
             TxtNexusResults.Text = "Link your game to Nexus to browse mods";
+            _isLoadingData = false;
             return;
         }
 
-        // Cancel any in-flight Nexus request
-        _nexusCts?.Cancel();
-        _nexusCts = new CancellationTokenSource();
-        var ct = _nexusCts.Token;
+        if (!loadMore)
+        {
+            _nexusCts?.Cancel();
+            _nexusCts = new CancellationTokenSource();
+            _currentOffset = 0; // Changed from _currentCursor = null
+            NexusMods.Clear();
+            _isSearching = false;
+        }
 
-        _currentNexusCategory = category;
-        UpdateCategoryButtonStyles();
+        TxtNexusResults.Text = loadMore ? "Loading more mods..." : "Loading mods...";
 
-        TxtNexusResults.Text = $"Loading {category} mods...";
-        // Don't clear NexusMods here — keep old results visible as loading indicator
+        string? categoryName = (CmbNexusCategories.SelectedItem as NexusCategory)?.Name;
+        if (categoryName == "All Categories") categoryName = null;
 
-        NexusSearchResult result;
-        string categoryLabel;
+        string sortStr = (CmbNexusSort.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Trending";
 
         try
         {
-            switch (category)
+            // Pass the categoryName string into the updated API method
+            var result = await _nexus.BrowseModsAsync(gameDomain, sortStr, categoryName, _currentOffset, _nexusCts!.Token);
+
+            if (_nexusCts.Token.IsCancellationRequested) return;
+
+            if (result.Success)
             {
-                case "trending":
-                    result = await _nexus.GetTrendingModsAsync(gameDomain, ct);
-                    categoryLabel = "trending";
-                    break;
-                case "updated":
-                    result = await _nexus.GetUpdatedModsAsync(gameDomain, ct);
-                    categoryLabel = "recently updated";
-                    break;
-                case "all":
-                    result = await _nexus.GetAllModsCombinedAsync(gameDomain, ct);
-                    categoryLabel = "all";
-                    break;
-                case "latest":
-                default:
-                    result = await _nexus.GetLatestModsAsync(gameDomain, ct);
-                    categoryLabel = "latest";
-                    break;
+                foreach (var mod in result.Mods) NexusMods.Add(mod);
+                _currentOffset = result.NextOffset; // Changed from NextCursor
+                _hasNextPage = result.HasNextPage;
+                TxtNexusResults.Text = $"Showing {NexusMods.Count} {sortStr.ToLower()} mods for {GetSelectedNexusGameName()}";
+            }
+            else
+            {
+                TxtNexusResults.Text = $"Failed to load mods: {result.Error}";
             }
         }
-        catch (OperationCanceledException)
-        {
-            return; // Silently abort — a newer request replaced this one
-        }
-
-        // Only update UI if this request wasn't cancelled
-        if (ct.IsCancellationRequested) return;
-
-        NexusMods.Clear();
-        if (result.Success)
-        {
-            foreach (var mod in result.Mods)
-            {
-                NexusMods.Add(mod);
-            }
-            TxtNexusResults.Text = $"Showing {NexusMods.Count} {categoryLabel} mods for {GetSelectedNexusGameName()}";
-        }
-        else
-        {
-            TxtNexusResults.Text = $"Failed to load mods: {result.Error}";
-        }
+        catch (OperationCanceledException) { }
+        finally { _isLoadingData = false; }
     }
 
-    private void UpdateCategoryButtonStyles()
+    private async Task SearchNexusMods(bool loadMore = false)
     {
-        var activeColor = new SolidColorBrush(Color.Parse("#4EC9B0"));
-        var inactiveColor = new SolidColorBrush(Color.Parse("#333"));
-        var activeFg = new SolidColorBrush(Color.Parse("#1E1E1E"));
-        var inactiveFg = new SolidColorBrush(Color.Parse("#EEE"));
-
-        BtnNexusAll.Background = _currentNexusCategory == "all" ? activeColor : inactiveColor;
-        BtnNexusAll.Foreground = _currentNexusCategory == "all" ? activeFg : inactiveFg;
-        
-        BtnNexusLatest.Background = _currentNexusCategory == "latest" ? activeColor : inactiveColor;
-        BtnNexusLatest.Foreground = _currentNexusCategory == "latest" ? activeFg : inactiveFg;
-        
-        BtnNexusTrending.Background = _currentNexusCategory == "trending" ? activeColor : inactiveColor;
-        BtnNexusTrending.Foreground = _currentNexusCategory == "trending" ? activeFg : inactiveFg;
-        
-        BtnNexusUpdated.Background = _currentNexusCategory == "updated" ? activeColor : inactiveColor;
-        BtnNexusUpdated.Foreground = _currentNexusCategory == "updated" ? activeFg : inactiveFg;
-    }
-
-    private async void BtnNexusAll_Click(object? sender, RoutedEventArgs e)
-    {
-        await LoadNexusModsAsync("all");
-    }
-
-    private async void BtnNexusLatest_Click(object? sender, RoutedEventArgs e)
-    {
-        await LoadNexusModsAsync("latest");
-    }
-
-    private async void BtnNexusTrending_Click(object? sender, RoutedEventArgs e)
-    {
-        await LoadNexusModsAsync("trending");
-    }
-
-    private async void BtnNexusUpdated_Click(object? sender, RoutedEventArgs e)
-    {
-        await LoadNexusModsAsync("updated");
-    }
-
-    private async void BtnNexusRefresh_Click(object? sender, RoutedEventArgs e)
-    {
-        await LoadNexusModsAsync(_currentNexusCategory);
-    }
-
-    private async Task LoadRecentNexusMods()
-    {
-        await LoadNexusModsAsync("all");
-    }
-
-    private async void BtnNexusSearch_Click(object? sender, RoutedEventArgs e)
-    {
-        await SearchNexusMods();
-    }
-
-    private async void TxtNexusSearch_KeyDown(object? sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter)
-        {
-            await SearchNexusMods();
-        }
-    }
-
-    private async Task SearchNexusMods()
-    {
-        if (!_nexus.IsAuthenticated) return;
+        if (_isLoadingData && loadMore) return;
+        _isLoadingData = true;
 
         var query = TxtNexusSearch.Text?.Trim() ?? "";
         var gameDomain = GetSelectedNexusGameDomain();
 
-        if (string.IsNullOrEmpty(gameDomain))
+        if (string.IsNullOrEmpty(gameDomain)) return;
+
+        if (!loadMore)
         {
-            SetStatus("Link your game to Nexus first.", false);
-            return;
+            _nexusCts?.Cancel();
+            _nexusCts = new CancellationTokenSource();
+            _currentOffset = 0;
+            NexusMods.Clear();
+            _isSearching = true;
         }
 
-        // Cancel any in-flight request
-        _nexusCts?.Cancel();
-        _nexusCts = new CancellationTokenSource();
-        var ct = _nexusCts.Token;
+        TxtNexusResults.Text = loadMore ? "Searching more..." : "Searching...";
 
-        TxtNexusResults.Text = "Searching...";
-
-        NexusSearchResult result;
         try
         {
-            result = await _nexus.SearchModsAsync(gameDomain, query, ct: ct);
-        }
-        catch (OperationCanceledException)
-        {
-            return;
-        }
+            var result = await _nexus.SearchModsAsync(gameDomain, query, _currentOffset, _nexusCts!.Token);
 
-        if (ct.IsCancellationRequested) return;
+            if (_nexusCts.Token.IsCancellationRequested) return;
 
-        NexusMods.Clear();
-
-        if (result.Success)
-        {
-            foreach (var mod in result.Mods.Take(50))
+            if (result.Success)
             {
-                NexusMods.Add(mod);
+                foreach (var mod in result.Mods) NexusMods.Add(mod);
+                _currentOffset = result.NextOffset;
+                _hasNextPage = result.HasNextPage;
+                TxtNexusResults.Text = $"Found {NexusMods.Count} mods matching \"{query}\"";
+            }
+            else
+            {
+                TxtNexusResults.Text = $"Search failed: {result.Error}";
             }
         }
+        catch (OperationCanceledException) { }
+        finally { _isLoadingData = false; }
+    }
 
-        if (string.IsNullOrEmpty(query))
+    private async void BtnNexusSearch_Click(object? sender, RoutedEventArgs e) => await SearchNexusMods(false);
+    private async void TxtNexusSearch_KeyDown(object? sender, KeyEventArgs e) { if (e.Key == Key.Enter) await SearchNexusMods(false); }
+
+    private void LstNexusMods_ScrollChanged(object? sender, ScrollChangedEventArgs e)
+    {
+        if (_isLoadingData || !_hasNextPage) return;
+
+        if (e.Source is ScrollViewer scrollViewer)
         {
-            TxtNexusResults.Text = $"Showing {NexusMods.Count} recent mods";
-        }
-        else if (NexusMods.Count == 0 && result.IsClientSideSearch)
-        {
-            // No results from client-side filtering — mod may still exist on Nexus
-            TxtNexusResults.Text = $"No mods matching \"{query}\" in cached results. Try browsing on Nexus directly.";
-        }
-        else
-        {
-            TxtNexusResults.Text = result.IsClientSideSearch
-                ? $"Found {NexusMods.Count} mods matching \"{query}\" (limited search — browse Nexus for full results)"
-                : $"Found {NexusMods.Count} mods matching \"{query}\"";
+            if (scrollViewer.Offset.Y >= scrollViewer.Extent.Height - scrollViewer.Viewport.Height - 100)
+            {
+                if (_isSearching)
+                {
+                    _ = SearchNexusMods(true);
+                }
+                else
+                {
+                    _ = LoadNexusModsAsync(true);
+                }
+            }
         }
     }
 
@@ -2167,14 +2438,11 @@ public partial class MainWindow : Window
         // Enable search and category buttons
         TxtNexusSearch.IsEnabled = true;
         BtnNexusSearch.IsEnabled = true;
-        BtnNexusAll.IsEnabled = true;
-        BtnNexusLatest.IsEnabled = true;
-        BtnNexusTrending.IsEnabled = true;
-        BtnNexusUpdated.IsEnabled = true;
         BtnNexusRefresh.IsEnabled = true;
-
         SetStatus($"Linked to {game.Name} on Nexus!", true);
-        await LoadNexusModsAsync("all");
+
+        await FetchCategoriesForGame();
+        await LoadNexusModsAsync(false);
     }
 
     private void UpdateNexusGameDisplay()
@@ -2182,17 +2450,20 @@ public partial class MainWindow : Window
         if (_currentNexusGame != null)
         {
             TxtNexusGameName.Text = _currentNexusGame.NexusGameName;
-            NexusGameIndicator.Background = new SolidColorBrush(Color.Parse("#4EC9B0")); // Green
+            if (Application.Current?.Resources.TryGetResource("SuccessBrush", null, out var successBrush) == true)
+                NexusGameIndicator.Background = (IBrush)successBrush!;
         }
         else if (!string.IsNullOrEmpty(_detectedGameName))
         {
             TxtNexusGameName.Text = $"{_detectedGameName} (not linked)";
-            NexusGameIndicator.Background = new SolidColorBrush(Color.Parse("#FFB900")); // Yellow
+            if (Application.Current?.Resources.TryGetResource("WarningBrush", null, out var warningBrush) == true)
+                NexusGameIndicator.Background = (IBrush)warningBrush!;
         }
         else
         {
             TxtNexusGameName.Text = "No game loaded";
-            NexusGameIndicator.Background = new SolidColorBrush(Color.Parse("#F44747")); // Red
+            if (Application.Current?.Resources.TryGetResource("DangerBrush", null, out var dangerBrush) == true)
+                NexusGameIndicator.Background = (IBrush)dangerBrush!;
         }
     }
 
@@ -2209,17 +2480,14 @@ public partial class MainWindow : Window
         {
             _currentNexusGame = savedMapping;
             UpdateNexusGameDisplay();
-            
+
             if (_nexus.IsAuthenticated)
             {
                 TxtNexusSearch.IsEnabled = true;
                 BtnNexusSearch.IsEnabled = true;
-                BtnNexusAll.IsEnabled = true;
-                BtnNexusLatest.IsEnabled = true;
-                BtnNexusTrending.IsEnabled = true;
-                BtnNexusUpdated.IsEnabled = true;
-                BtnNexusRefresh.IsEnabled = true;
-                await LoadNexusModsAsync("all");
+
+                await FetchCategoriesForGame();
+                await LoadNexusModsAsync(false);
             }
             return;
         }
@@ -2248,17 +2516,15 @@ public partial class MainWindow : Window
 
         UpdateNexusGameDisplay();
         BtnLinkNexusGame.IsEnabled = _nexus.IsAuthenticated;
-        
+
         if (_currentNexusGame != null && _nexus.IsAuthenticated)
         {
             TxtNexusSearch.IsEnabled = true;
             BtnNexusSearch.IsEnabled = true;
-            BtnNexusAll.IsEnabled = true;
-            BtnNexusLatest.IsEnabled = true;
-            BtnNexusTrending.IsEnabled = true;
-            BtnNexusUpdated.IsEnabled = true;
             BtnNexusRefresh.IsEnabled = true;
-            await LoadNexusModsAsync("all");
+
+            await FetchCategoriesForGame();
+            await LoadNexusModsAsync(false);
         }
     }
 
@@ -2429,7 +2695,7 @@ public partial class MainWindow : Window
                 if (_engine != null)
                 {
                     // Check if we already have this mod installed (by Nexus ID)
-                    var existingMod = InstalledMods.FirstOrDefault(m => m.Manifest.Metadata.NexusId == mod.ModId);
+                    var existingMod = _allMods.FirstOrDefault(m => m.Manifest.Metadata.NexusId == mod.ModId);
 
                     string statusMsg;
                     InstallResult result;
@@ -2473,6 +2739,9 @@ public partial class MainWindow : Window
                     {
                         SetStatus($"Installation failed: {result.Error}", false);
                     }
+
+                    // Instantly delete the ZIP file from the TempDownloads folder after processing
+                    try { File.Delete(filePath); } catch { /* Ignore file-in-use locks */ }
                 }
                 else
                 {
@@ -2495,19 +2764,55 @@ public partial class MainWindow : Window
         }
     }
 
-    private void BtnSaveNexusKey_Click(object? sender, RoutedEventArgs e)
+    private async void BtnSaveNexusKey_Click(object? sender, RoutedEventArgs e)
     {
         var apiKey = TxtNexusApiKey.Text?.Trim();
-        
+
         if (string.IsNullOrEmpty(apiKey))
         {
             SetStatus("API key cannot be empty.", false);
             return;
         }
 
-        _settings.Settings.NexusApiKey = apiKey;
+        // If the user manually pastes a key in the settings tab, we still want to encrypt it
+        var ssoService = new NexusSsoService(NexusAppSlug);
+        string secureKey = ssoService.EncryptKeyForStorage(apiKey);
+
+        _settings.Settings.NexusApiKey = secureKey;
+        _settings.Settings.IsSsoAuthenticated = false;
         _settings.Save();
-        SetStatus("API key saved. Click 'Connect' on the Nexus Mods tab to connect.", true);
+
+        SetStatus("API key saved. Validating connection...", true);
+        await ValidateAndConnectNexus(apiKey);
+    }
+
+    private void BtnDisconnectNexus_Click(object? sender, RoutedEventArgs e)
+    {
+        // Clear saved key
+        _settings.Settings.NexusApiKey = null;
+        _settings.Settings.IsSsoAuthenticated = false;
+        _settings.Save();
+
+        // Clear API instance state instead of destroying the HttpClient
+        _nexus.ClearAuth(); 
+        
+        // Revert UI Polish
+        TxtNexusApiKey.Text = "";
+        TxtNexusApiKey.IsReadOnly = false;
+        TxtNexusApiKey.Foreground = new SolidColorBrush(Color.Parse("#DDD"));
+        TxtNexusApiKey.PasswordChar = '●';
+        BtnSaveNexusKey.IsVisible = true;
+        BtnDisconnectNexus.IsVisible = false;
+
+        // Reset Auth UI in Nexus Tab
+        if (Application.Current?.Resources.TryGetResource("DangerBrush", null, out var dangerBrush) == true)
+            NexusAuthIndicator.Background = (IBrush)dangerBrush!;
+        
+        TxtNexusStatus.Text = "Not connected";
+        BtnNexusConnect.Content = "Login with Nexus Mods";
+        BtnNexusConnect.IsEnabled = true;
+
+        SetStatus("Disconnected from Nexus Mods.", true);
     }
 
     private void BtnRegisterNxm_Click(object? sender, RoutedEventArgs e)
@@ -2557,9 +2862,15 @@ public partial class MainWindow : Window
     private void SetStatus(string message, bool success)
     {
         TxtStatus.Text = message;
-        StatusIndicator.Background = success
-            ? new SolidColorBrush(Color.Parse("#4EC9B0"))
-            : new SolidColorBrush(Color.Parse("#F44747"));
+        StatusIndicator.Background = GetStatusBrush(success);
+    }
+
+    private IBrush GetStatusBrush(bool success)
+    {
+        string key = success ? "SuccessBrush" : "DangerBrush";
+        if (Application.Current?.Resources.TryGetResource(key, null, out var brush) == true)
+            return (IBrush)brush!;
+        return success ? Brushes.Green : Brushes.Red;
     }
 
     protected override void OnClosed(EventArgs e)

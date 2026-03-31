@@ -38,6 +38,10 @@ public class ModMetadata
 
     [JsonProperty("description")]
     public string Description { get; set; } = "";
+
+    // Cached evaluation flag for O(1) UI performance
+    [JsonProperty("is_fhmm_mod")]
+    public bool IsFhmmMod { get; set; } = false;
 }
 
 public class FileOperation

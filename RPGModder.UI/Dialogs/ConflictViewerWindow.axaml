@@ -6,32 +6,31 @@
         WindowStartupLocation="CenterOwner"
         Background="#1E1E1E" ExtendClientAreaToDecorationsHint="True">
 
-    <Grid RowDefinitions="Auto, Auto, *, Auto" Margin="20">
-        <StackPanel Spacing="5">
-            <TextBlock Text="Conflict Matrix" FontSize="22" FontWeight="Bold" Foreground="White"/>
-            <TextBlock Name="TxtSummary" Text="Analyzing..." Foreground="#888" FontFamily="Consolas"/>
+    <Grid RowDefinitions="Auto, Auto, *, Auto" Margin="24" Background="{StaticResource BackgroundBrush}">
+        <StackPanel Spacing="8">
+            <TextBlock Text="Conflict Matrix" FontSize="26" FontWeight="ExtraBold" Foreground="{StaticResource TextMainBrush}"/>
+            <TextBlock Name="TxtSummary" Text="Analyzing file overlaps..." Foreground="{StaticResource TextMutedBrush}" FontFamily="{StaticResource MonoFont}" FontSize="13"/>
         </StackPanel>
 
-        <TextBox Grid.Row="1" Name="TxtSearch" Watermark="🔍 Search files..."
-                 Margin="0,15,0,10" Background="#252526" Foreground="#DDD"
-                 BorderThickness="1" BorderBrush="#444" CornerRadius="4"/>
+        <TextBox Grid.Row="1" Name="TxtSearch" Watermark="🔍 Search conflicted files..."
+                 Margin="0,20,0,15" Padding="12,10"/>
 
-        <Border Grid.Row="2" BorderBrush="#333" BorderThickness="1" CornerRadius="4" Background="#252526">
-            <ListBox Name="LstConflicts" Background="Transparent">
+        <Border Grid.Row="2" Classes="card" Padding="0">
+            <ListBox Name="LstConflicts" Background="Transparent" Padding="5">
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="dialogs:ConflictViewModel">
-                        <Border BorderBrush="#333" BorderThickness="0,0,0,1" Padding="5">
-                            <Grid ColumnDefinitions="80, *, 200">
-                                <Border Background="{Binding StatusColor}" CornerRadius="3"
-                                        HorizontalAlignment="Left" Padding="6,2" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding Status}" Foreground="#111" FontWeight="Bold" FontSize="10"/>
+                        <Border BorderBrush="{StaticResource SeparatorBrush}" BorderThickness="0,0,0,1" Padding="12,8">
+                            <Grid ColumnDefinitions="100, *, 250">
+                                <Border Background="{Binding StatusColor}" CornerRadius="4"
+                                        HorizontalAlignment="Left" Padding="8,3" VerticalAlignment="Center" MinWidth="80">
+                                    <TextBlock Text="{Binding Status}" Foreground="White" FontWeight="Black" FontSize="10" HorizontalAlignment="Center"/>
                                 </Border>
 
-                                <TextBlock Grid.Column="1" Text="{Binding FilePath}" Foreground="#DDD"
-                                           FontFamily="Consolas" VerticalAlignment="Center" Margin="10,0"/>
+                                <TextBlock Grid.Column="1" Text="{Binding FilePath}" Foreground="{StaticResource TextMainBrush}"
+                                           FontFamily="{StaticResource MonoFont}" VerticalAlignment="Center" Margin="15,0" FontSize="12"/>
 
-                                <TextBlock Grid.Column="2" Text="{Binding Details}" Foreground="#AAA"
-                                           FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Grid.Column="2" Text="{Binding Details}" Foreground="{StaticResource TextDimBrush}"
+                                           FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" HorizontalAlignment="Right"/>
                             </Grid>
                         </Border>
                     </DataTemplate>
@@ -39,9 +38,12 @@
             </ListBox>
         </Border>
 
-        <Grid Grid.Row="3" ColumnDefinitions="*, Auto" Margin="0,15,0,0">
-            <TextBlock Name="TxtCount" Text="0 files" VerticalAlignment="Center" Foreground="#666"/>
-            <Button Grid.Column="1" Content="Close" Click="BtnClose_Click"/>
+        <Grid Grid.Row="3" ColumnDefinitions="*, Auto" Margin="0,20,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <TextBlock Text="Total Files:" Foreground="{StaticResource TextDimBrush}" FontSize="12"/>
+                <TextBlock Name="TxtCount" Text="0" Foreground="{StaticResource TextMutedBrush}" FontWeight="Bold" FontSize="12"/>
+            </StackPanel>
+            <Button Grid.Column="1" Content="Close" Click="BtnClose_Click" Padding="25,10" FontWeight="Bold"/>
         </Grid>
     </Grid>
 </Window>

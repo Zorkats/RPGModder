@@ -1,3 +1,4 @@
+using LZStringCSharp;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -45,6 +46,48 @@ public class JsonMergeService
             LastReport.Errors.Add($"Merge failed: {ex.Message}");
             // Fall back to last mod wins
             return modJsons.LastOrDefault() ?? baseJson;
+        }
+    }
+
+    // Specifically handles RPG Maker MV's LZ-String compressed save/config files
+    public string MergeLzStringConfigFiles(string baseLzBase64, IEnumerable<string> modLzBase64s, string fileName)
+    {
+        LastReport = new MergeReport { FileName = fileName };
+
+        try
+        {
+            // 1. Decode the base vanilla/profile config
+            string baseJson = LZString.DecompressFromBase64(baseLzBase64);
+
+            // Fallback: If decompression fails or is empty, it might be MZ (plain text) or corrupted
+            if (string.IsNullOrEmpty(baseJson))
+            {
+                baseJson = baseLzBase64;
+                LastReport.Strategy = "Fallback to Plain Text / Uncompressed";
+            }
+            else
+            {
+                LastReport.Strategy = "LZ-String Decompression & Object Merge";
+            }
+
+            // 2. Decode all mod configs
+            var decodedModJsons = new List<string>();
+            foreach (var modLz in modLzBase64s)
+            {
+                string decoded = LZString.DecompressFromBase64(modLz);
+                decodedModJsons.Add(!string.IsNullOrEmpty(decoded) ? decoded : modLz);
+            }
+
+            // 3. Pass the decoded plain-text JSONs to your existing merge logic
+            string mergedPlainJson = MergeJsonFiles(baseJson, decodedModJsons, fileName);
+
+            // 4. Re-encode back to LZ-String Base64 for the game engine to read
+            return LZString.CompressToBase64(mergedPlainJson);
+        }
+        catch (Exception ex)
+        {
+            LastReport.Errors.Add($"LZ-String parsing failed: {ex.Message}");
+            return baseLzBase64; // Return unaltered base file on catastrophic failure
         }
     }
 
@@ -102,7 +145,7 @@ public class JsonMergeService
                             // Attempt field-level merge
                             var mergeResult = MergeObjects(existingObj, modObj);
                             mergedArray[i] = mergeResult.Merged;
-                            
+
                             if (mergeResult.FieldConflicts.Count > 0)
                             {
                                 LastReport.Conflicts.Add(new MergeConflict
@@ -162,7 +205,7 @@ public class JsonMergeService
                 var modObject = JObject.Parse(modJson);
                 var result = MergeObjects(merged, modObject);
                 merged = result.Merged;
-                
+
                 foreach (var field in result.FieldConflicts)
                 {
                     LastReport.Conflicts.Add(new MergeConflict
@@ -257,14 +300,14 @@ public class MergeReport
         sb.AppendLine($"=== Merge Report: {FileName} ===");
         sb.AppendLine($"Strategy: {Strategy}");
         sb.AppendLine($"Records: {MergedRecords} merged / {TotalRecords} total");
-        
+
         if (Conflicts.Count > 0)
         {
             sb.AppendLine($"Conflicts ({Conflicts.Count}):");
             foreach (var c in Conflicts)
                 sb.AppendLine($"  - Index {c.Index}, Field: {c.Field}, Resolution: {c.Resolution}");
         }
-        
+
         if (Errors.Count > 0)
         {
             sb.AppendLine($"Errors ({Errors.Count}):");

@@ -1,6 +1,9 @@
 using Newtonsoft.Json;
 using RPGModder.Core.Models;
+using System;
+using System.IO;
 using System.IO.Compression;
+using System.Linq;
 
 namespace RPGModder.Core.Services;
 
@@ -174,8 +177,12 @@ public class ModInstallerService
             CopyDirectory(folderPath, targetPath);
 
             // Fix target paths in mod.json so they're game-content-relative.
-            // Source paths stay as-is (they match the physical file layout).
             NormalizeManifestTargets(manifest);
+
+            // HYDRATION: Calculate FHMM state on install to prevent UI lag
+            manifest.Metadata.IsFhmmMod = manifest.FileOps.Any(op =>
+                op.Target.Contains("mods/", StringComparison.OrdinalIgnoreCase) ||
+                op.Target.Contains("_moddata/", StringComparison.OrdinalIgnoreCase));
 
             // Save the cleaned mod.json
             File.WriteAllText(
@@ -207,7 +214,7 @@ public class ModInstallerService
         try
         {
             var directories = Directory.GetDirectories(rootPath);
-            
+
             // First pass: check immediate children
             foreach (var dir in directories)
             {
@@ -270,9 +277,6 @@ public class ModInstallerService
         }
     }
 
-    // Normalizes all target paths in a manifest to be game-content-relative.
-    // Strips wrapper folders and www/ prefixes so targets like
-    // "SomeMod-v1.0/www/data/System.json" become "data/System.json".
     private void NormalizeManifestTargets(ModManifest manifest)
     {
         foreach (var op in manifest.FileOps)
@@ -285,22 +289,14 @@ public class ModInstallerService
         }
     }
 
-    // Strips everything before the actual game-relative content path.
-    // "SomeMod/www/data/System.json" → "data/System.json"
-    // "SomeMod/www/js/plugins/X.js"  → "js/plugins/X.js"
-    // "SomeMod/data/Actors.json"     → "data/Actors.json"
-    // "data/Actors.json"             → "data/Actors.json" (unchanged)
-    // "SomeMod/changelog.txt"        → "SomeMod/changelog.txt" (no known root, unchanged)
     private string NormalizeGamePath(string path)
     {
         string normalized = path.Replace('\\', '/');
 
-        // Strip everything up to and including "www/"
         int wwwIdx = normalized.LastIndexOf("www/", StringComparison.OrdinalIgnoreCase);
         if (wwwIdx >= 0)
             return normalized.Substring(wwwIdx + 4);
 
-        // Find the first known RPG Maker content folder
         string[] knownRoots = { "data/", "js/", "img/", "audio/", "fonts/", "css/", "icon/", "movies/", "effects/" };
         foreach (var root in knownRoots)
         {
@@ -309,7 +305,6 @@ public class ModInstallerService
                 return normalized.Substring(idx);
         }
 
-        // No known root found — leave as-is (e.g. changelog.txt, readme)
         return path;
     }
 
