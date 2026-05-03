@@ -8,9 +8,9 @@
         <ApplicationIcon>Assets\rpgmodder.ico</ApplicationIcon>
         <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
 
-        <Version>1.1.2</Version>
-        <FileVersion>1.1.2</FileVersion>
-        <AssemblyVersion>1.1.2</AssemblyVersion>
+        <Version>1.2.1</Version>
+        <FileVersion>1.2.1</FileVersion>
+        <AssemblyVersion>1.2.1</AssemblyVersion>
         <Authors>Vicente</Authors>
         <Company>RPGModder</Company>
         <Product>RPGModder</Product>
