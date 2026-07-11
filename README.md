@@ -1,18 +1,23 @@
 # RPGModder
 
-**A modern, non-destructive Mod Manager for RPG Maker MV & MZ games.**
+**A transactional mod manager for RPG Maker MV and MZ games.**
 
-<img width="900" height="600" alt="{1106E3C2-BD36-425D-BF68-469AE4EF63C2}" src="https://github.com/user-attachments/assets/8e93b0be-7cb4-41a1-ad7f-83688a93e852" />
+![alt text]({A395C084-686E-4A90-B838-E43D4687365C}.png)
 
+RPGModder is a standalone tool designed to solve conflicting files and corrupted game folders. It validates mod paths, preserves a vanilla snapshot, records deployments, and automatically rolls back a failed or interrupted deployment.
 
-RPGModder is a standalone tool designed to solve the "RPG Maker Hell" of conflicting files and corrupt game folders. It uses a **Virtual File System (VFS)** approach to keep your vanilla game files pristine while allowing you to install, reorder, and merge mods seamlessly.
+RPGModder currently uses transactional deployment rather than runtime filesystem virtualization. Mods are resolved and deployed into the game content directory under rollback protection.
 
 ## 🚀 Key Features
 
-### 🛡️ Safe-State Engine
-Never corrupt your game again. RPGModder keeps a clean backup of your vanilla game. When you play, it virtually rebuilds the game folder with your active mods.
-* **Zero-Risk Modding:** Uninstalling a mod is as simple as unchecking a box.
-* **Auto-Recovery:** If a mod breaks your game, simply "Rebuild" to restore a working state.
+### Transactional deployment
+RPGModder keeps a clean vanilla snapshot and a transaction journal for every deployment.
+* **Validated manifests:** Mod IDs and file paths cannot escape their declared roots.
+* **Automatic rollback:** Failed or interrupted deployments restore the previous live game state.
+* **Deployment history:** Successful deployments and rollbacks are visible in the Activity workspace.
+
+### Conflict analysis
+The Conflicts workspace distinguishes ordinary file overwrites, structured JSON merges, and semantic JSON patches. Load order determines overwrite winners.
 
 ### 🌐 Nexus Mods Integration
 Direct integration with the Nexus Mods ecosystem.
@@ -61,10 +66,46 @@ You do not need to learn the `mod.json` syntax. RPGModder includes a powerful "D
 
 ## 📥 Installation
 
-1.  Download the latest release from the [Releases Page](#).
-2.  Extract the ZIP anywhere.
-3.  Run `RPGModder.UI.exe`.
-4.  (Optional) On first launch, go to **Settings** and click **"Register"** to enable One-Click Downloads from Nexus Mods.
+Download the appropriate self-contained package from the [Releases Page](https://github.com/Zorkats/RPGModder/releases).
+
+### Windows x64
+
+1. Extract `RPGModder-<version>-win-x64.zip` anywhere.
+2. Run `RPGModder.exe`.
+3. Optionally register `nxm://` from **Settings** for Nexus one-click downloads.
+
+### Linux x64
+
+1. Install the desktop integration dependencies for your distribution:
+   - Arch/CachyOS: `sudo pacman -S libsecret xdg-utils`
+   - Debian/Ubuntu: `sudo apt install libsecret-tools xdg-utils`
+   - Fedora: `sudo dnf install libsecret xdg-utils`
+2. Extract `RPGModder-<version>-linux-x64.tar.gz`.
+3. Run `packaging/linux/install.sh` for a per-user installation, or launch `./RPGModder` directly for portable use.
+4. Register `nxm://` from **Settings** if the installer did not register it automatically.
+
+Linux API keys are stored through the desktop Secret Service using `secret-tool`; RPGModder refuses to persist them as plaintext when secure storage is unavailable. Steam and Flatpak Steam libraries are detected, and Windows RPG Maker releases are launched through Steam/Proton when an AppID is available.
+
+### Linux development and handheld testing
+
+Cross-publish locally before deploying to the configured Ally test machine:
+
+```powershell
+dotnet publish RPGModder.UI/RPGModder.UI.csproj `
+  --configuration Release `
+  --runtime linux-x64 `
+  --self-contained true `
+  --output artifacts/linux-x64/RPGModder-2.0.0-linux-x64
+```
+
+The repository `.allyrc` then syncs that artifact and launches it through `ally-tooling`. The published executable also supports `--platform-diagnostics` and the isolated Linux integration check `--platform-self-test`.
+
+On a Linux packaging machine without the .NET SDK, create the release archive from the synced cross-published directory:
+
+```bash
+PREBUILT_DIR=artifacts/linux-x64/RPGModder-2.0.0-linux-x64 \
+  ./packaging/linux/package.sh 2.0.0
+```
 
 ---
 
@@ -72,8 +113,8 @@ You do not need to learn the `mod.json` syntax. RPGModder includes a powerful "D
 
 ### 1. Managing Games
 * RPGModder automatically scans your Steam library and common folders for RPG Maker games.
-* Select a game from the dropdown or click **Browse** to find a `Game.exe` manually.
-* The tool will perform a one-time "Safe State Initialization" to backup your vanilla files.
+* Select a game from the dropdown or click **Browse** to find a Windows/Proton or native Linux game executable manually.
+* The tool performs a one-time safe-state initialization and imports legacy RPGModder data into the per-game `.rpgmodder` workspace without deleting the legacy files.
 
 ### 2. Installing Mods
 * **From Nexus:** Click "Mod Manager Download" on the website.
@@ -82,11 +123,7 @@ You do not need to learn the `mod.json` syntax. RPGModder includes a powerful "D
 
 ---
 
-## Why is the UI so simple and ugly?
-
-* Honestly? This is my first time making an application on Avalonia from zero, so my experience is pretty much barebones. There's a bit of visual bugs regarding the emojis I used (as I wanted to give a bit of color to the application), but I hope to fix these and improve the visuals of the UI on future updates.
-
-## And why does this mod manager exists? why not use FHMM? (Fear and Hunger Mod Manager)
+## Why does this mod manager exist instead of using FHMM?
 
 * This began as a simple project to make a mod manager for Look Outside (my favorite RPG Maker game!) and it turned out to be much bigger as I kept going. I hope people give it a chance, it would make me very happy if modders use it. 
 
