@@ -2,7 +2,8 @@
 
 **A transactional mod manager for RPG Maker MV and MZ games.**
 
-![alt text]({A395C084-686E-4A90-B838-E43D4687365C}.png)
+<img width="1277" height="718" alt="{90A49365-5EEB-4ACF-AA37-136548DD8857}" src="https://github.com/user-attachments/assets/20ea94fb-c1e7-48bd-8e26-8246455c8fc9" />
+
 
 RPGModder is a standalone tool designed to solve conflicting files and corrupted game folders. It validates mod paths, preserves a vanilla snapshot, records deployments, and automatically rolls back a failed or interrupted deployment.
 
