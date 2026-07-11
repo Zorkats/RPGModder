@@ -16,7 +16,7 @@
         <Grid Grid.Row="1" ColumnDefinitions="*, Auto" Margin="0,20,0,15">
             <TextBox Name="TxtSearch" Watermark="Search mod name..." 
                      Padding="12,10" VerticalAlignment="Center"/>
-            <Button Name="BtnSearch" Grid.Column="1" Content="🔍 Search" 
+        <Button Name="BtnSearch" Grid.Column="1" Content="Search"
                     Margin="8,0,0,0" Padding="15,10" Classes="primary" IsDefault="True"/>
         </Grid>
 

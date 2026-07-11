@@ -43,8 +43,8 @@
                 <TextBlock Text="Profile:" VerticalAlignment="Center" Foreground="#AAA"/>
                 <ComboBox Name="CboProfiles" Width="140"/>
                 <Button Name="BtnAddProfile" Content="+" Padding="8,4" ToolTip.Tip="New Profile"/>
-                <Button Name="BtnSaveProfile" Content="💾" Padding="8,4" ToolTip.Tip="Save Profile"/>
-                <Button Name="BtnRemoveProfile" Content="🗑️" Padding="8,4" Classes="danger" ToolTip.Tip="Delete Profile"/>
+                <Button Name="BtnSaveProfile" Content="Save" Padding="10,5" ToolTip.Tip="Save profile"/>
+                <Button Name="BtnRemoveProfile" Content="Delete" Padding="10,5" Classes="danger" ToolTip.Tip="Delete profile"/>
             </StackPanel>
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                 <!-- Game Selector Dropdown -->
@@ -55,192 +55,199 @@
                 
                 <!-- Manual path input -->
                 <TextBox Name="TxtGamePath" IsReadOnly="True" Width="280"
-                         Watermark="Select Game.exe..."
+                         Watermark="Select a game executable..."
                          Background="#252526" Foreground="#DDD"
                          BorderThickness="1" BorderBrush="#333" CornerRadius="4"/>
                 
-                <Button Name="BtnScanGames" Content="🔍" ToolTip.Tip="Scan for RPG Maker games" Padding="8,6"/>
-                <Button Name="BtnSelect" Content="📁" ToolTip.Tip="Browse manually"/>
+                <Button Name="BtnScanGames" Content="Scan" ToolTip.Tip="Scan for RPG Maker games" Padding="10,6"/>
+                <Button Name="BtnSelect" Content="Browse" ToolTip.Tip="Browse manually"/>
             </StackPanel>
         </Grid>
 
         <!-- Main Content -->
         <TabControl Grid.Row="1" Name="MainTabControl">
 
-            <!-- MY MODS TAB -->
-            <TabItem Header="My Mods" FontSize="16" FontWeight="SemiBold">
-                <Grid RowDefinitions="Auto, *, Auto">
-                    
-                    <!-- Search Bar -->
-                    <Grid Grid.Row="0" ColumnDefinitions="*, Auto" Margin="0,10,0,0">
-                        <TextBox Name="TxtSearch" Watermark="🔍 Search mods..."
-                                 Background="#252526" Foreground="#DDD"
-                                 BorderThickness="1" BorderBrush="#444" CornerRadius="4"
-                                 Padding="10,8"/>
-                        <Button Grid.Column="1" Name="BtnClearSearch" Content="✕" 
-                                Margin="5,0,0,0" Padding="8,6"
-                                IsVisible="False"
-                                ToolTip.Tip="Clear search"/>
-                    </Grid>
-                    
-                    <!-- Mod List -->
-                    <Border Grid.Row="1" Margin="0,10,0,0"
-                            BorderBrush="#444" BorderThickness="1" CornerRadius="8"
-                            Background="#252526"
-                            DragDrop.AllowDrop="True" Name="DropZone">
-                        <Panel>
-                            <!-- Placeholder when empty -->
-                            <StackPanel Name="PlaceholderText" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8">
-                                <TextBlock Text="📦 Drag Mod Folders Here" Foreground="#666" HorizontalAlignment="Center" FontSize="18"/>
-                                <TextBlock Text="(Folder must contain mod.json)" Foreground="#444" HorizontalAlignment="Center" FontSize="13"/>
+            <TabItem Header="Mods" FontSize="15" FontWeight="SemiBold">
+                <Grid RowDefinitions="Auto,*,Auto" Margin="0,8,0,0">
+                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,10">
+                        <TextBox Name="TxtSearch" Watermark="Search installed mods" Classes="search"/>
+                        <Button Grid.Column="1" Name="BtnClearSearch" Content="Clear" Margin="8,0,0,0" IsVisible="False"/>
+                        <Border Grid.Column="2" Classes="summary" Margin="12,0,0,0">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <TextBlock Text="Installed" Classes="caption"/>
+                                <TextBlock Name="TxtTotalMods" Text="0" FontWeight="SemiBold"/>
+                                <TextBlock Text="Enabled" Classes="caption"/>
+                                <TextBlock Name="TxtActiveMods" Text="0" Foreground="{StaticResource SuccessBrush}" FontWeight="SemiBold"/>
                             </StackPanel>
+                        </Border>
+                    </Grid>
 
-                            <!-- Mod List -->
-                            <ListBox Name="LstMods" Background="Transparent" Foreground="White" Padding="5"
-                                     SelectionMode="Single"
-                                     DragDrop.AllowDrop="True">
-                                <ListBox.ContextMenu>
-                                    <ContextMenu>
-                                        <MenuItem Header="📁 Open Folder" Name="CtxOpenFolder"/>
-                                        <MenuItem Header="📄 View mod.json" Name="CtxViewManifest"/>
-                                        <MenuItem Header="⚔️ View Conflicts" Name="CtxViewConflicts"/> 
-                                        <Separator/>
-                                        <MenuItem Header="🔗 Link to Nexus" Name="CtxLinkNexus"/>
-                                        <MenuItem Header="🔍 Check for Updates" Name="CtxCheckUpdate"/>
-                                        <MenuItem Header="📥 Download Update" Name="CtxDownloadUpdate" IsVisible="False" Foreground="#4EC9B0" FontWeight="Bold"/>
-                                        <Separator/>
-                                        <MenuItem Header="⬆️ Move Up" Name="CtxMoveUp"/>
-                                        <MenuItem Header="⬇️ Move Down" Name="CtxMoveDown"/>
-                                        <Separator/>
-                                        <MenuItem Header="✓ Enable" Name="CtxEnable"/>
-                                        <MenuItem Header="✗ Disable" Name="CtxDisable"/>
-                                        <Separator/>
-                                        <MenuItem Header="🗑️ Remove" Name="CtxRemove"/>
-                                    </ContextMenu>
-                                </ListBox.ContextMenu>
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate x:DataType="models:ModListItem">
-                                        <Grid ColumnDefinitions="Auto, Auto, *, Auto, Auto" MinHeight="55">
-                                            <!-- Drag Handle -->
-                                            <TextBlock Grid.Column="0" Text="⋮⋮" Foreground="#555" FontSize="14"
-                                                       VerticalAlignment="Center" Margin="0,0,8,0"
-                                                       Cursor="Hand" ToolTip.Tip="Drag to reorder"
-                                                       PointerPressed="DragHandle_PointerPressed"/>
-                                            
-                                            <!-- Enable Checkbox -->
-                                            <CheckBox Grid.Column="1" 
-                                                      IsChecked="{Binding IsEnabled, Mode=TwoWay}" 
-                                                      VerticalAlignment="Center"
-                                                      Margin="0,0,12,0"/>
-                                            
-                                            <!-- Mod Info -->
-                                            <Grid Grid.Column="2" RowDefinitions="Auto, Auto, Auto" VerticalAlignment="Center">
-                                                <!-- Name + Conflict Warning -->
-                                                <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
-                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14" Foreground="#EEE"/>
-                                                    <Border Background="#8B4513" CornerRadius="3" Padding="4,1" 
-                                                            IsVisible="{Binding HasConflicts}" VerticalAlignment="Center">
-                                                        <TextBlock Text="⚠ Conflicts" FontSize="9" Foreground="#FFA500" 
-                                                                   ToolTip.Tip="{Binding ConflictTooltip}"/>
-                                                    </Border>
+                    <Grid Grid.Row="1" ColumnDefinitions="3*,2*" ColumnSpacing="10">
+                        <Border Grid.Column="0" Classes="panel" DragDrop.AllowDrop="True" Name="DropZone">
+                            <Panel>
+                                <StackPanel Name="PlaceholderText" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="7">
+                                    <TextBlock Text="Drop a mod folder or ZIP here" Classes="emptyTitle"/>
+                                    <TextBlock Text="RPGModder validates mod.json before installation" Classes="caption"/>
+                                </StackPanel>
+                                <ListBox Name="LstMods" Background="Transparent" Padding="4" SelectionMode="Single" DragDrop.AllowDrop="True">
+                                    <ListBox.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Open mod folder" Name="CtxOpenFolder"/>
+                                            <MenuItem Header="View manifest" Name="CtxViewManifest"/>
+                                            <MenuItem Header="Inspect conflicts" Name="CtxViewConflicts"/>
+                                            <Separator/>
+                                            <MenuItem Header="Link to Nexus Mods" Name="CtxLinkNexus"/>
+                                            <MenuItem Header="Check for updates" Name="CtxCheckUpdate"/>
+                                            <MenuItem Header="Download update" Name="CtxDownloadUpdate" IsVisible="False" Foreground="{StaticResource SuccessBrush}"/>
+                                            <Separator/>
+                                            <MenuItem Header="Move earlier" Name="CtxMoveUp"/>
+                                            <MenuItem Header="Move later" Name="CtxMoveDown"/>
+                                            <MenuItem Header="Enable" Name="CtxEnable"/>
+                                            <MenuItem Header="Disable" Name="CtxDisable"/>
+                                            <Separator/>
+                                            <MenuItem Header="Remove mod" Name="CtxRemove"/>
+                                        </ContextMenu>
+                                    </ListBox.ContextMenu>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="models:ModListItem">
+                                            <Grid ColumnDefinitions="36,Auto,*,Auto" MinHeight="62" Margin="2">
+                                                <Border Grid.Column="0" Classes="orderBadge" VerticalAlignment="Center" Cursor="Hand" PointerPressed="DragHandle_PointerPressed">
+                                                    <TextBlock Text="{Binding LoadOrder}" HorizontalAlignment="Center"/>
+                                                </Border>
+                                                <CheckBox Grid.Column="1" IsChecked="{Binding IsEnabled, Mode=TwoWay}" VerticalAlignment="Center" Margin="10,0,12,0"/>
+                                                <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="3">
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14"/>
+                                                        <Border Classes="conflictBadge" IsVisible="{Binding HasConflicts}">
+                                                            <TextBlock Text="Conflict" FontSize="10" ToolTip.Tip="{Binding ConflictTooltip}"/>
+                                                        </Border>
+                                                    </StackPanel>
+                                                    <TextBlock Text="{Binding Description}" Classes="caption" TextTrimming="CharacterEllipsis" MaxLines="1"/>
+                                                    <TextBlock Text="{Binding Author}" Classes="metadata"/>
                                                 </StackPanel>
-                                                <!-- Description -->
-                                                <TextBlock Grid.Row="1" Text="{Binding Description}" FontSize="11" Foreground="#888" 
-                                                           TextWrapping="NoWrap" Margin="0,2,0,0"/>
-                                                <!-- Author Row -->
-                                                <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="5" Margin="0,3,0,0">
-                                                    <TextBlock Text="by" Foreground="#555" FontSize="10"/>
-                                                    <TextBlock Text="{Binding Author}" Foreground="#777" FontSize="10"/>
-                                                </StackPanel>
+                                                <Border Grid.Column="3" Classes="versionBadge" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Version}"/>
+                                                </Border>
                                             </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Panel>
+                        </Border>
 
-                                            <!-- Version Badge -->
-                                            <Border Grid.Column="3" Background="#333" CornerRadius="4" Padding="8,4" 
-                                                    VerticalAlignment="Center" Margin="10,0">
-                                                <TextBlock Text="{Binding Version}" Foreground="#AAA" FontSize="11" FontWeight="SemiBold"/>
-                                            </Border>
+                        <Border Grid.Column="1" Name="ModInspectorPlaceholder" Classes="panel" Padding="18">
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="6">
+                                <TextBlock Text="Select a mod" Classes="emptyTitle" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Metadata, deployment paths, and conflicts appear here." Classes="caption" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="260"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Grid.Column="1" Name="ModInspector" Classes="panel" Padding="18" IsVisible="False" x:DataType="models:ModListItem">
+                            <ScrollViewer>
+                                <StackPanel Spacing="14">
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="MOD INSPECTOR" Classes="eyebrow"/>
+                                        <TextBlock Text="{Binding Name}" FontSize="21" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding Description}" Classes="bodyMuted" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="7">
+                                        <TextBlock Text="Author" Classes="caption"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Author}"/>
+                                        <TextBlock Grid.Row="1" Text="Version" Classes="caption"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Version}"/>
+                                        <TextBlock Grid.Row="2" Text="Folder" Classes="caption"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding FolderName}" FontFamily="{StaticResource MonoFont}" FontSize="11"/>
+                                    </Grid>
+                                    <Separator/>
+                                    <StackPanel Spacing="7">
+                                        <TextBlock Text="CONFLICTED FILES" Classes="eyebrow"/>
+                                        <ItemsControl ItemsSource="{Binding ConflictingFiles}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding}" FontFamily="{StaticResource MonoFont}" FontSize="11" Foreground="{StaticResource TextMutedBrush}" Margin="0,3" TextWrapping="Wrap"/>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <TextBlock Text="No active file conflicts" Classes="caption" IsVisible="{Binding !HasConflicts}"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+                    </Grid>
 
-                                            <!-- Remove Button -->
-                                            <Button Grid.Column="4" Content="✕" 
-                                                    Classes="danger"
-                                                    Padding="8,4"
-                                                    FontSize="12"
-                                                    ToolTip.Tip="Remove Mod"
-                                                    Click="BtnRemoveMod_Click"
-                                                    Tag="{Binding FolderName}"/>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                        </Panel>
-                    </Border>
-
-                    <!-- Action Bar -->
-                    <Border Grid.Row="2" Margin="0,10,0,0" Background="#252526" CornerRadius="6" Padding="12,10">
-                        <Grid ColumnDefinitions="Auto, Auto, Auto, Auto, *, Auto, Auto">
-                            <!-- Install Mod with Flyout -->
-                            <Button Name="BtnInstallMod" Grid.Column="0" 
-                                    Content="📥 Install Mod ▾" 
-                                    ToolTip.Tip="Install from folder or ZIP file"
-                                    IsEnabled="False">
+                    <Border Grid.Row="2" Classes="actionBar" Margin="0,10,0,0">
+                        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto">
+                            <Button Name="BtnInstallMod" Content="Install mod" IsEnabled="False">
                                 <Button.Flyout>
                                     <MenuFlyout Placement="BottomEdgeAlignedLeft">
-                                        <MenuItem Header="📦 From ZIP File..." Name="MenuInstallZip"/>
-                                        <MenuItem Header="📁 From Folder..." Name="MenuInstallFolder"/>
+                                        <MenuItem Header="Install from ZIP" Name="MenuInstallZip"/>
+                                        <MenuItem Header="Install from folder" Name="MenuInstallFolder"/>
                                     </MenuFlyout>
                                 </Button.Flyout>
                             </Button>
-                            
-                            <!-- Launch Game -->
-                            <Button Name="BtnLaunchGame" Grid.Column="1" 
-                                    Content="▶ Launch Game" 
-                                    Classes="primary"
-                                    Margin="10,0,0,0"
-                                    IsEnabled="False"/>
-                            
-                            <!-- Rebuild -->
-                            <Button Name="BtnRebuild" Grid.Column="2" 
-                                    Content="🔄 Apply Changes" 
-                                    Margin="10,0,0,0"
-                                    IsEnabled="False"/>
-
-                            <!-- Open Game Folder -->
-                            <Button Name="BtnOpenGameFolder" Grid.Column="3" 
-                                    Content="📁 Open Folder" 
-                                    Margin="10,0,0,0"
-                                    ToolTip.Tip="Open game folder in Explorer"
-                                    IsEnabled="False"/>
-
-                            <Button Name="BtnSaveManager" Grid.Column="4"
-                                    Content="💾 Save Manager"
-                                    Margin="10,0,0,0"
-                                    ToolTip.Tip="Manage Save Files and Backups"
-                                    IsEnabled="False"
-                                    Click="BtnSaveManager_Click"/>
-
-                            <!-- Mod Count Stats -->
-                            <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="15" VerticalAlignment="Center">
-                                <StackPanel Orientation="Horizontal" Spacing="5">
-                                    <TextBlock Text="Total:" Foreground="#666" FontSize="12"/>
-                                    <TextBlock Name="TxtTotalMods" Text="0" Foreground="#AAA" FontSize="12" FontWeight="SemiBold"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Spacing="5">
-                                    <TextBlock Text="Active:" Foreground="#666" FontSize="12"/>
-                                    <TextBlock Name="TxtActiveMods" Text="0" Foreground="#4EC9B0" FontSize="12" FontWeight="SemiBold"/>
-                                </StackPanel>
-                            </StackPanel>
-
-                            <!-- Pending Changes Indicator -->
-                            <Border Grid.Column="6" Name="PendingChangesIndicator" 
-                                    Background="#4D3800" CornerRadius="4" Padding="10,5" Margin="15,0,0,0"
-                                    IsVisible="False">
-                                <TextBlock Text="⚠ Unsaved Changes" Foreground="#FFB900" FontSize="11" FontWeight="SemiBold"/>
+                            <Button Grid.Column="1" Name="BtnRebuild" Content="Deploy changes" Classes="primary" Margin="8,0,0,0" IsEnabled="False"/>
+                            <Button Grid.Column="2" Name="BtnLaunchGame" Content="Launch game" Margin="8,0,0,0" IsEnabled="False"/>
+                            <Button Grid.Column="3" Name="BtnOpenGameFolder" Content="Open folder" Margin="8,0,0,0" IsEnabled="False"/>
+                            <Button Grid.Column="4" Name="BtnSaveManager" Content="Save manager" Margin="8,0,0,0" IsEnabled="False" Click="BtnSaveManager_Click"/>
+                            <Border Grid.Column="6" Name="PendingChangesIndicator" Classes="pendingBadge" IsVisible="False">
+                                <TextBlock Text="Changes not deployed" Foreground="{StaticResource WarningBrush}"/>
                             </Border>
                         </Grid>
                     </Border>
                 </Grid>
             </TabItem>
+            <TabItem Header="Conflicts" FontSize="15">
+                <Grid RowDefinitions="Auto,*" Margin="0,8,0,0">
+                    <Border Classes="summary" Margin="0,0,0,10">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <TextBlock Text="Conflict analysis" FontWeight="SemiBold"/>
+                            <TextBlock Name="TxtConflictSummary" Text="Load a game to analyze conflicts" Classes="caption" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Row="1" Classes="panel">
+                        <ListBox Name="LstAllConflicts" Background="Transparent" Padding="5">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="services:FileConflict">
+                                    <Grid ColumnDefinitions="2*,3*,2*" MinHeight="58" Margin="8,3">
+                                        <StackPanel VerticalAlignment="Center" Spacing="3">
+                                            <TextBlock Text="{Binding Kind}" Foreground="{StaticResource WarningBrush}" FontWeight="SemiBold"/>
+                                            <TextBlock Text="{Binding Resolution}" Classes="caption"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="3">
+                                            <TextBlock Text="{Binding FilePath}" FontFamily="{StaticResource MonoFont}" FontSize="12" TextWrapping="Wrap"/>
+                                            <TextBlock Text="{Binding Participants}" Classes="caption" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="2" Text="{Binding Winner}" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource SuccessBrush}" FontWeight="SemiBold"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+                </Grid>
+            </TabItem>
 
+            <TabItem Header="Activity" FontSize="15">
+                <Grid RowDefinitions="Auto,*" Margin="0,8,0,0">
+                    <Border Classes="summary" Margin="0,0,0,10">
+                        <StackPanel Spacing="3">
+                            <TextBlock Text="Deployment history" FontWeight="SemiBold"/>
+                            <TextBlock Text="Successful deployments and automatic rollbacks are recorded here." Classes="caption"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Row="1" Classes="panel">
+                        <ListBox Name="LstActivity" Background="Transparent" Padding="5">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="models:DeploymentHistoryEntry">
+                                    <Grid ColumnDefinitions="150,120,*" MinHeight="56" Margin="8,3">
+                                        <TextBlock Text="{Binding TimestampDisplay}" Classes="caption" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Status}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="2" Text="{Binding Summary}" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+                </Grid>
+            </TabItem>
             <!-- CREATOR TOOLS TAB -->
             <TabItem Header="Creator Tools" FontSize="16">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -258,8 +265,8 @@
                                      Watermark="Select your modded game folder or ZIP..."
                                      Background="#252526" Foreground="#DDD"
                                      BorderThickness="1" BorderBrush="#333" CornerRadius="4" Margin="0,0,10,0"/>
-                            <Button Name="BtnBrowseWork" Grid.Column="2" Content="📁 Folder" ToolTip.Tip="Select folder"/>
-                            <Button Name="BtnBrowseWorkZip" Grid.Column="3" Content="📦 ZIP" Margin="5,0,0,0" ToolTip.Tip="Select ZIP file"/>
+                        <Button Name="BtnBrowseWork" Grid.Column="2" Content="Folder" ToolTip.Tip="Select folder"/>
+                        <Button Name="BtnBrowseWorkZip" Grid.Column="3" Content="ZIP" Margin="5,0,0,0" ToolTip.Tip="Select ZIP file"/>
                         </Grid>
 
                         <Grid ColumnDefinitions="Auto, *, Auto">
@@ -270,7 +277,7 @@
                                      BorderThickness="1" BorderBrush="#333" CornerRadius="4" Margin="0,0,10,0">
                                 <ToolTip.Tip>
                                     <StackPanel>
-                                        <TextBlock Text="⚠️ IMPORTANT: This folder must be 100% clean!" FontWeight="Bold" Foreground="#FF5555"/>
+                                <TextBlock Text="IMPORTANT: This folder must be 100% clean." FontWeight="Bold" Foreground="#FF6B75"/>
                                         <TextBlock Text="If this folder contains mods, the Auto-Packer will produce bad results."/>
                                         <TextBlock Text="Tip: If you have a game loaded, we will auto-use the Safe Backup." FontStyle="Italic"/>
                                     </StackPanel>
@@ -279,7 +286,7 @@
                             <Button Name="BtnBrowseVanilla" Grid.Column="2" Content="Browse / Auto"/>
                         </Grid>
 
-                        <Button Name="BtnAnalyze" Content="🔍 Analyze Differences" HorizontalAlignment="Left" Margin="0,5,0,0"/>
+                    <Button Name="BtnAnalyze" Content="Analyze differences" HorizontalAlignment="Left" Margin="0,5,0,0"/>
                     </StackPanel>
 
                     <!-- Metadata Input -->
@@ -325,7 +332,7 @@
                                         <ContextMenu>
                                             <MenuItem Header="Remove from Package" Click="CtxRemoveChange_Click">
                                                 <MenuItem.Icon>
-                                                    <TextBlock Text="❌"/>
+                                        <TextBlock Text="Remove"/>
                                                 </MenuItem.Icon>
                                             </MenuItem>
                                         </ContextMenu>
@@ -352,7 +359,7 @@
                     <!-- Generate Button -->
                     <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10" Margin="0,10,0,0">
                         <TextBlock Name="TxtPackerStatus" Foreground="#888" VerticalAlignment="Center" FontSize="12"/>
-                        <Button Name="BtnGeneratePackage" Content="📦 Generate Mod Package" IsEnabled="False"/>
+                        <Button Name="BtnGeneratePackage" Content="Generate mod package" IsEnabled="False"/>
                     </StackPanel>
 
                 </Grid>
@@ -360,14 +367,13 @@
             </TabItem>
 
             <!-- NEXUS MODS TAB -->
-            <TabItem Header="🌐 Nexus Mods" FontSize="16">
+            <TabItem Header="Nexus Mods" FontSize="15">
                 <Grid RowDefinitions="Auto, Auto, Auto, Auto, *, Auto" Margin="10">
                     
                     <!-- Migration Banner -->
                     <Border Grid.Row="0" Name="BdrMigrationBanner" IsVisible="False" Background="#33FFCC00" BorderBrush="#88FFCC00" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,10">
                         <Grid ColumnDefinitions="*, Auto">
                             <StackPanel Orientation="Horizontal" Spacing="10">
-                                <TextBlock Text="🛡️" VerticalAlignment="Center" FontSize="16"/>
                                 <TextBlock Text="Upgrade to Secure One-Click login for Nexus Mods." 
                                            VerticalAlignment="Center" Foreground="#EEE"/>
                             </StackPanel>
@@ -396,7 +402,7 @@
                                 <TextBox Name="TxtNexusSearch" Watermark="Search mods on Nexus..." 
                                          Background="#1E1E1E" Foreground="#DDD" Padding="10,8"
                                          IsEnabled="False"/>
-                                <Button Grid.Column="1" Name="BtnNexusSearch" Content="🔍" Margin="5,0,0,0"
+                        <Button Grid.Column="1" Name="BtnNexusSearch" Content="Search" Margin="5,0,0,0"
                                         Padding="10,6" IsEnabled="False"/>
                             </Grid>
                             
@@ -406,7 +412,7 @@
                                         Background="#F44747" VerticalAlignment="Center"/>
                                 <TextBlock Name="TxtNexusGameName" Text="No game loaded" Foreground="#888" 
                                            VerticalAlignment="Center" MaxWidth="180" TextTrimming="CharacterEllipsis"/>
-                                <Button Name="BtnLinkNexusGame" Content="🔗" Padding="6,4" FontSize="12"
+                            <Button Name="BtnLinkNexusGame" Content="Link game" Padding="8,4" FontSize="12"
                                         ToolTip.Tip="Link to Nexus game page" IsEnabled="False"/>
                             </StackPanel>
                         </Grid>
@@ -421,7 +427,7 @@
                                 <ComboBoxItem Content="Latest"/>
                                 <ComboBoxItem Content="Updated"/>
                             </ComboBox>
-                            <Button Name="BtnNexusRefresh" Grid.Column="3" Content="⟳ Refresh" Padding="10,8" IsEnabled="False"/>
+                        <Button Name="BtnNexusRefresh" Grid.Column="3" Content="Refresh" Padding="10,8" IsEnabled="False"/>
                         </Grid>
                     </Border>
                     
@@ -429,12 +435,12 @@
                     <Border Grid.Row="3" Name="NexusLinkPanel" Background="#1E3A1E" CornerRadius="6" 
                             Margin="0,10,0,0" Padding="12" IsVisible="False">
                         <Grid ColumnDefinitions="Auto, *, Auto, Auto">
-                            <TextBlock Text="🔗 Link to Nexus:" Foreground="#8BC34A" VerticalAlignment="Center"/>
+                            <TextBlock Text="Link to Nexus" Foreground="{StaticResource SuccessBrush}" VerticalAlignment="Center"/>
                             <TextBox Grid.Column="1" Name="TxtNexusGameSearch" 
                                      Watermark="Search for game on Nexus (e.g. Fear and Hunger, Omori)..."
                                      Background="#1E1E1E" Foreground="#DDD" Padding="10,8" Margin="10,0"/>
                             <Button Grid.Column="2" Name="BtnSearchNexusGame" Content="Search" Padding="12,6"/>
-                            <Button Grid.Column="3" Name="BtnCancelLinkGame" Content="✕" Padding="8,6" Margin="5,0,0,0"
+                        <Button Grid.Column="3" Name="BtnCancelLinkGame" Content="Cancel" Padding="8,6" Margin="5,0,0,0"
                                     Background="#4A1E1E"/>
                         </Grid>
                     </Border>
@@ -483,7 +489,7 @@
                                                     ClipToBounds="True">
                                                 <Panel>
                                                     <!-- Placeholder icon (shown when no image) -->
-                                                    <TextBlock Text="📦" FontSize="24" HorizontalAlignment="Center" 
+                                                <TextBlock Text="MOD" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"
                                                                VerticalAlignment="Center" Foreground="#666"/>
                                                     <!-- Async loaded image -->
                                                     <Image asyncImageLoader:ImageLoader.Source="{Binding PictureUrl}"
@@ -510,11 +516,11 @@
                                             <!-- Action Buttons -->
                                             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="5" 
                                                         VerticalAlignment="Center">
-                                                <Button Content="🔍" Padding="8,6"
+                                            <Button Content="View" Padding="8,6"
                                                         ToolTip.Tip="View on Nexus"
                                                         Tag="{Binding}"
                                                         Click="BtnViewOnNexus_Click"/>
-                                                <Button Content="📥 Download" Padding="12,6"
+                                            <Button Content="Download" Padding="12,6"
                                                         Tag="{Binding}"
                                                         Click="BtnNexusDownload_Click"/>
                                             </StackPanel>
@@ -530,7 +536,7 @@
                             Name="DownloadsPanel" IsVisible="False">
                         <Grid RowDefinitions="Auto, Auto">
                             <StackPanel Orientation="Horizontal" Spacing="10">
-                                <TextBlock Text="📥 Downloads" FontWeight="SemiBold" Foreground="#EEE"/>
+                        <TextBlock Text="Downloads" FontWeight="SemiBold" Foreground="#EEE"/>
                                 <TextBlock Name="TxtDownloadCount" Text="(0)" Foreground="#888"/>
                             </StackPanel>
                             <ItemsControl Grid.Row="1" Name="LstDownloads" Margin="0,10,0,0">
@@ -557,7 +563,7 @@
             </TabItem>
 
             <!-- SETTINGS TAB -->
-            <TabItem Header="⚙️ Settings" FontSize="16">
+            <TabItem Header="Settings" FontSize="15">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="10" Spacing="20">
                         
@@ -586,7 +592,7 @@
                             <StackPanel Spacing="12">
                                 <TextBlock Text="Mod Management" FontSize="16" FontWeight="SemiBold" Foreground="#EEE"/>
 
-                                <CheckBox Name="ChkUseSymlinks" Content="🚀 Use Symbolic Links (Instant Deploy)"
+                                <CheckBox Name="ChkUseSymlinks" Content="Use symbolic links for deployment"
                                           Foreground="#CCC" ToolTip.Tip="Uses shortcuts instead of copying files. Saves space and time."/>
 
                                 <CheckBox Name="ChkSmartMerge" Content="Smart JSON merging (like Wrye Bash)"
@@ -648,8 +654,8 @@
                                            Foreground="#666" FontSize="11" Margin="0,5,0,0"/>
                                 
                                 <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,10,0,0">
-                                    <Button Name="BtnOpenAppData" Content="📁 Open Data Folder" Padding="10,6"/>
-                                    <Button Name="BtnResetBackup" Content="🔄 Reset Vanilla Backup" Padding="10,6" Classes="danger"/>
+                                <Button Name="BtnOpenAppData" Content="Open data folder" Padding="10,6"/>
+                                <Button Name="BtnResetBackup" Content="Reset vanilla backup" Padding="10,6" Classes="danger"/>
                                 </StackPanel>
                             </StackPanel>
                         </Border>

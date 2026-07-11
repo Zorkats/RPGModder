@@ -10,7 +10,6 @@
 
             <!-- Header -->
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="10" Margin="0,0,0,12">
-                <TextBlock Text="🚀" FontSize="24" VerticalAlignment="Center"/>
                 <StackPanel>
                     <TextBlock Text="New Version Available!" FontWeight="Bold" FontSize="16" Foreground="White"/>
                     <TextBlock Name="TxtVersion" Text="v1.1.0 is ready to download" Foreground="#AAA" FontSize="12"/>

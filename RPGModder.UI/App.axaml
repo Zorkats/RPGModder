@@ -5,16 +5,16 @@
 
     <Application.Resources>
         <!-- Design Tokens: Colors -->
-        <Color x:Key="BackgroundColor">#1E1E1E</Color>
-        <Color x:Key="SurfaceColor">#252526</Color>
-        <Color x:Key="SurfaceColorLight">#2D2D30</Color>
-        <Color x:Key="PrimaryColor">#0E639C</Color>
-        <Color x:Key="PrimaryColorHover">#1177BB</Color>
-        <Color x:Key="DangerColor">#5A1D1D</Color>
-        <Color x:Key="SuccessColor">#4EC9B0</Color>
-        <Color x:Key="WarningColor">#E67E22</Color>
-        <Color x:Key="BorderColor">#444444</Color>
-        <Color x:Key="SeparatorColor">#333333</Color>
+        <Color x:Key="BackgroundColor">#0E1116</Color>
+        <Color x:Key="SurfaceColor">#151A22</Color>
+        <Color x:Key="SurfaceColorLight">#1D2430</Color>
+        <Color x:Key="PrimaryColor">#4C8DFF</Color>
+        <Color x:Key="PrimaryColorHover">#6CA1FF</Color>
+        <Color x:Key="DangerColor">#7F2D36</Color>
+        <Color x:Key="SuccessColor">#42C6A5</Color>
+        <Color x:Key="WarningColor">#F1AD4E</Color>
+        <Color x:Key="BorderColor">#2B3442</Color>
+        <Color x:Key="SeparatorColor">#232B37</Color>
         
         <SolidColorBrush x:Key="BackgroundBrush" Color="{StaticResource BackgroundColor}"/>
         <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}"/>
@@ -27,9 +27,9 @@
         <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}"/>
         <SolidColorBrush x:Key="SeparatorBrush" Color="{StaticResource SeparatorColor}"/>
         
-        <SolidColorBrush x:Key="TextMainBrush" Color="White"/>
-        <SolidColorBrush x:Key="TextMutedBrush" Color="#888888"/>
-        <SolidColorBrush x:Key="TextDimBrush" Color="#555555"/>
+        <SolidColorBrush x:Key="TextMainBrush" Color="#F4F7FB"/>
+        <SolidColorBrush x:Key="TextMutedBrush" Color="#9AA7B7"/>
+        <SolidColorBrush x:Key="TextDimBrush" Color="#697689"/>
         
         <!-- Typography -->
         <FontFamily x:Key="MainFont">Inter, Segoe UI, sans-serif</FontFamily>
@@ -120,6 +120,85 @@
         <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
             <Setter Property="BorderBrush" Value="{StaticResource PrimaryBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+
+        <Style Selector="Border.panel">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+        </Style>
+        <Style Selector="Border.actionBar">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="12"/>
+        </Style>
+        <Style Selector="Border.summary">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="12,8"/>
+        </Style>
+        <Style Selector="Border.orderBadge">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrushLight}"/>
+            <Setter Property="CornerRadius" Value="5"/>
+            <Setter Property="Padding" Value="5"/>
+        </Style>
+        <Style Selector="Border.versionBadge">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrushLight}"/>
+            <Setter Property="CornerRadius" Value="5"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Margin" Value="10,0"/>
+        </Style>
+        <Style Selector="Border.conflictBadge">
+            <Setter Property="Background" Value="#392A18"/>
+            <Setter Property="BorderBrush" Value="#6C4A1C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="6,2"/>
+        </Style>
+        <Style Selector="Border.pendingBadge">
+            <Setter Property="Background" Value="#392A18"/>
+            <Setter Property="CornerRadius" Value="5"/>
+            <Setter Property="Padding" Value="10,6"/>
+        </Style>
+        <Style Selector="TextBox.search">
+            <Setter Property="MinHeight" Value="38"/>
+        </Style>
+        <Style Selector="TextBlock.caption">
+            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}"/>
+            <Setter Property="FontSize" Value="11"/>
+        </Style>
+        <Style Selector="TextBlock.metadata">
+            <Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
+            <Setter Property="FontSize" Value="10"/>
+        </Style>
+        <Style Selector="TextBlock.eyebrow">
+            <Setter Property="Foreground" Value="{StaticResource PrimaryBrushHover}"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="LetterSpacing" Value="1.2"/>
+        </Style>
+        <Style Selector="TextBlock.bodyMuted">
+            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="LineHeight" Value="18"/>
+        </Style>
+        <Style Selector="TextBlock.emptyTitle">
+            <Setter Property="Foreground" Value="{StaticResource TextMainBrush}"/>
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Margin" Value="0,1"/>
+            <Setter Property="Padding" Value="8,4"/>
+        </Style>
+        <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+            <Setter Property="Background" Value="#243653"/>
         </Style>
 
     </Application.Styles>

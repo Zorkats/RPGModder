@@ -10,8 +10,8 @@ namespace RPGModder.UI.Dialogs;
 
 public partial class ModLinkWindow : Window
 {
-    private readonly NexusApiService _nexus;
-    private readonly string _gameDomain;
+    private readonly NexusApiService _nexus = null!;
+    private readonly string _gameDomain = "";
     public NexusMod? SelectedMod { get; private set; }
 
     public ModLinkWindow() { InitializeComponent(); }

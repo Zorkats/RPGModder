@@ -8,8 +8,8 @@ namespace RPGModder.UI.Dialogs;
 
 public partial class UpdateDialog : Window
 {
-    private readonly UpdateService _service;
-    private readonly UpdateInfo _info;
+    private readonly UpdateService _service = null!;
+    private readonly UpdateInfo _info = null!;
 
     public UpdateDialog() { InitializeComponent(); }
 

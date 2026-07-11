@@ -5,6 +5,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using RPGModder.Core.Services;
 
 namespace RPGModder.UI.Dialogs;
 
@@ -28,7 +29,7 @@ public partial class SaveManagerWindow : Window
             potentialPath = gameRoot;
 
         _saveFolder = potentialPath;
-        _backupFolder = Path.Combine(gameRoot, "ModManager_Backups", "Saves");
+        _backupFolder = new GameWorkspacePaths(gameRoot).SaveBackups;
 
         if (!Directory.Exists(_backupFolder)) Directory.CreateDirectory(_backupFolder);
 

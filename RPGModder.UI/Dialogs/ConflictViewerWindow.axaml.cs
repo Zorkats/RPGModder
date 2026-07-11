@@ -30,11 +30,13 @@ public partial class ConflictViewerWindow : Window
             return new ConflictViewModel
             {
                 FilePath = c.FilePath,
-                Status = isWinner ? "WINNING" : "LOSING",
-                StatusColor = isWinner ? Brushes.LightGreen : Brushes.IndianRed,
-                Details = isWinner
-                    ? $"Overwrites: {enemiesStr}"
-                    : $"Overwritten by: {c.Winner}"
+                Status = c.IsMergeable ? "MERGED" : isWinner ? "WINNING" : "LOSING",
+                StatusColor = c.IsMergeable ? Brushes.SteelBlue : isWinner ? Brushes.LightGreen : Brushes.IndianRed,
+                Details = c.IsMergeable
+                    ? $"{c.Kind}: {enemiesStr}"
+                    : isWinner
+                        ? $"Overwrites: {enemiesStr}"
+                        : $"Overwritten by: {c.Winner}"
             };
         }).OrderBy(x => x.Status).ThenBy(x => x.FilePath).ToList();
 

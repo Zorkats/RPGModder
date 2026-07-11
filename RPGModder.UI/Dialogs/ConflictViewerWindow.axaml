@@ -12,7 +12,7 @@
             <TextBlock Name="TxtSummary" Text="Analyzing file overlaps..." Foreground="{StaticResource TextMutedBrush}" FontFamily="{StaticResource MonoFont}" FontSize="13"/>
         </StackPanel>
 
-        <TextBox Grid.Row="1" Name="TxtSearch" Watermark="🔍 Search conflicted files..."
+        <TextBox Grid.Row="1" Name="TxtSearch" Watermark="Search conflicted files"
                  Margin="0,20,0,15" Padding="12,10"/>
 
         <Border Grid.Row="2" Classes="card" Padding="0">
