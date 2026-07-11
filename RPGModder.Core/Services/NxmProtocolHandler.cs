@@ -13,8 +13,9 @@ public class NxmProtocolHandler
     // Registers RPGModder as the handler for nxm:// links (requires admin on first run)
     public static bool RegisterProtocol(string exePath)
     {
-        if (!OperatingSystem.IsWindows())
-            return false;
+        if (OperatingSystem.IsLinux())
+            return RegisterLinuxProtocol(exePath);
+        if (!OperatingSystem.IsWindows()) return false;
 
         try
         {
@@ -44,8 +45,21 @@ public class NxmProtocolHandler
     // Checks if RPGModder is registered as the nxm:// handler
     public static bool IsProtocolRegistered()
     {
-        if (!OperatingSystem.IsWindows())
+        if (OperatingSystem.IsLinux())
+        {
+            string? xdgMime = PlatformService.FindExecutable("xdg-mime");
+            if (xdgMime == null)
+                return false;
+
+            string? handler = PlatformService.Capture(xdgMime,
+                ["query", "default", "x-scheme-handler/nxm"]);
+            if (handler?.Equals(GetLinuxDesktopFileName(), StringComparison.Ordinal) == true)
+                return File.Exists(GetLinuxDesktopPath());
+            if (handler?.Equals(GetPackagedLinuxDesktopFileName(), StringComparison.Ordinal) == true)
+                return File.Exists(Path.Combine(GetLinuxApplicationsDirectory(), GetPackagedLinuxDesktopFileName()));
             return false;
+        }
+        if (!OperatingSystem.IsWindows()) return false;
 
         try
         {
@@ -64,8 +78,20 @@ public class NxmProtocolHandler
     // Unregisters the nxm:// protocol handler
     public static bool UnregisterProtocol()
     {
-        if (!OperatingSystem.IsWindows())
-            return false;
+        if (OperatingSystem.IsLinux())
+        {
+            try
+            {
+                string desktopPath = GetLinuxDesktopPath();
+                if (File.Exists(desktopPath))
+                    File.Delete(desktopPath);
+                RemoveLinuxMimeAssociation();
+                RefreshLinuxDesktopDatabase();
+                return true;
+            }
+            catch { return false; }
+        }
+        if (!OperatingSystem.IsWindows()) return false;
 
         try
         {
@@ -93,26 +119,34 @@ public class NxmProtocolHandler
             var uri = new Uri(url);
             var segments = uri.AbsolutePath.Trim('/').Split('/');
 
-            // Expected format: gameDomain/mods/modId/files/fileId
-            if (segments.Length < 5)
+            // Canonical URI format: nxm://gameDomain/mods/modId/files/fileId
+            string gameDomain = uri.Host;
+            int offset = 0;
+            if (string.IsNullOrWhiteSpace(gameDomain) && segments.Length >= 5)
+            {
+                gameDomain = segments[0];
+                offset = 1;
+            }
+
+            if (string.IsNullOrWhiteSpace(gameDomain) || segments.Length < offset + 4)
                 return null;
 
             var link = new NxmLink
             {
-                GameDomain = segments[0],
+                GameDomain = gameDomain,
                 OriginalUrl = url
             };
 
             // Parse mod ID
-            if (segments[1].Equals("mods", StringComparison.OrdinalIgnoreCase) && 
-                int.TryParse(segments[2], out int modId))
+            if (segments[offset].Equals("mods", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(segments[offset + 1], out int modId))
             {
                 link.ModId = modId;
             }
 
             // Parse file ID
-            if (segments[3].Equals("files", StringComparison.OrdinalIgnoreCase) && 
-                int.TryParse(segments[4], out int fileId))
+            if (segments[offset + 2].Equals("files", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(segments[offset + 3], out int fileId))
             {
                 link.FileId = fileId;
             }
@@ -179,6 +213,116 @@ public class NxmProtocolHandler
 
         return null;
     }
+
+    private static bool RegisterLinuxProtocol(string exePath)
+    {
+        try
+        {
+            string? xdgMime = PlatformService.FindExecutable("xdg-mime");
+            if (xdgMime == null || !File.Exists(exePath))
+                return false;
+
+            string desktopPath = GetLinuxDesktopPath();
+            Directory.CreateDirectory(Path.GetDirectoryName(desktopPath)!);
+            Directory.CreateDirectory(GetLinuxConfigHome());
+            string escapedExecutable = EscapeDesktopExecArgument(Path.GetFullPath(exePath));
+            string desktopEntry = $"""
+                [Desktop Entry]
+                Type=Application
+                Name=RPGModder
+                Comment=Manage RPG Maker mods
+                Exec="{escapedExecutable}" %u
+                Terminal=false
+                Categories=Game;
+                MimeType=x-scheme-handler/nxm;
+                NoDisplay=true
+                """;
+            FileTreeService.WriteAllTextAtomic(desktopPath, desktopEntry + Environment.NewLine);
+            RefreshLinuxDesktopDatabase();
+
+            return PlatformService.Run(xdgMime,
+                ["default", GetLinuxDesktopFileName(), "x-scheme-handler/nxm"]);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void RefreshLinuxDesktopDatabase()
+    {
+        string? updater = PlatformService.FindExecutable("update-desktop-database");
+        if (updater != null)
+            PlatformService.Run(updater, [Path.GetDirectoryName(GetLinuxDesktopPath())!], requireSuccess: false);
+    }
+
+    private static string GetLinuxDesktopFileName() => "rpgmodder-nxm.desktop";
+
+    private static string GetPackagedLinuxDesktopFileName() => "rpgmodder.desktop";
+
+    private static string GetLinuxDesktopPath()
+    {
+        return Path.Combine(GetLinuxApplicationsDirectory(), GetLinuxDesktopFileName());
+    }
+
+    private static string GetLinuxApplicationsDirectory()
+    {
+        string dataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME") ??
+                          Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+        return Path.Combine(dataHome, "applications");
+    }
+
+    private static string GetLinuxConfigHome() =>
+        Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") ??
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
+
+    private static void RemoveLinuxMimeAssociation()
+    {
+        string dataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME") ??
+                          Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+        string[] files =
+        [
+            Path.Combine(GetLinuxConfigHome(), "mimeapps.list"),
+            Path.Combine(dataHome, "applications", "mimeapps.list")
+        ];
+
+        foreach (string file in files.Distinct(PlatformService.PathComparer))
+        {
+            if (!File.Exists(file))
+                continue;
+
+            string[] lines = File.ReadAllLines(file);
+            bool changed = false;
+            var updated = new List<string>(lines.Length);
+            foreach (string line in lines)
+            {
+                const string key = "x-scheme-handler/nxm=";
+                if (!line.StartsWith(key, StringComparison.OrdinalIgnoreCase))
+                {
+                    updated.Add(line);
+                    continue;
+                }
+
+                string[] handlers = line[key.Length..]
+                    .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                string[] remaining = handlers.Where(handler =>
+                    !handler.Equals(GetLinuxDesktopFileName(), StringComparison.OrdinalIgnoreCase) &&
+                    !handler.Equals(GetPackagedLinuxDesktopFileName(), StringComparison.OrdinalIgnoreCase)).ToArray();
+                changed |= remaining.Length != handlers.Length;
+                if (remaining.Length > 0)
+                    updated.Add(key + string.Join(';', remaining) + ";");
+            }
+
+            if (changed)
+                FileTreeService.WriteAllTextAtomic(file, string.Join(Environment.NewLine, updated) + Environment.NewLine);
+        }
+    }
+
+    private static string EscapeDesktopExecArgument(string value) =>
+        value.Replace("\\", "\\\\", StringComparison.Ordinal)
+             .Replace("\"", "\\\"", StringComparison.Ordinal)
+             .Replace("`", "\\`", StringComparison.Ordinal)
+             .Replace("$", "\\$", StringComparison.Ordinal);
 }
 
 // Parsed nxm:// link data

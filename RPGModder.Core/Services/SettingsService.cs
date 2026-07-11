@@ -5,19 +5,21 @@ namespace RPGModder.Core.Services;
 // Persists app settings and cached game list
 public class SettingsService
 {
-    private static readonly string SettingsFolder = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "RPGModder"
-    );
-    
-    private static readonly string SettingsFile = Path.Combine(SettingsFolder, "settings.json");
-    private static readonly string GamesCache = Path.Combine(SettingsFolder, "games.json");
+    public const int CurrentSchemaVersion = 2;
+    private static readonly string DefaultSettingsFolder = ResolveDefaultSettingsFolder();
+    private readonly string _settingsFolder;
+    private readonly string _settingsFile;
+    private readonly string _gamesCache;
 
     public AppSettings Settings { get; private set; } = new();
     public List<DetectedGame> CachedGames { get; private set; } = new();
+    public string? LastPersistenceError { get; private set; }
 
-    public SettingsService()
+    public SettingsService(string? settingsFolder = null)
     {
+        _settingsFolder = settingsFolder ?? DefaultSettingsFolder;
+        _settingsFile = Path.Combine(_settingsFolder, "settings.json");
+        _gamesCache = Path.Combine(_settingsFolder, "games.json");
         EnsureFolder();
         Load();
     }
@@ -26,8 +28,9 @@ public class SettingsService
     {
         try
         {
-            if (!Directory.Exists(SettingsFolder))
-                Directory.CreateDirectory(SettingsFolder);
+            if (!Directory.Exists(_settingsFolder))
+                Directory.CreateDirectory(_settingsFolder);
+            ProtectPath(_settingsFolder, isDirectory: true);
         }
         catch { }
     }
@@ -37,36 +40,51 @@ public class SettingsService
         // Load settings
         try
         {
-            if (File.Exists(SettingsFile))
+            if (File.Exists(_settingsFile))
             {
-                var json = File.ReadAllText(SettingsFile);
+                var json = File.ReadAllText(_settingsFile);
                 Settings = JsonConvert.DeserializeObject<AppSettings>(json) ?? new AppSettings();
+                MigrateSettings();
             }
         }
-        catch { Settings = new AppSettings(); }
+        catch (Exception ex)
+        {
+            LastPersistenceError = ex.Message;
+            Settings = new AppSettings();
+        }
 
         // Load cached games
         try
         {
-            if (File.Exists(GamesCache))
+            if (File.Exists(_gamesCache))
             {
-                var json = File.ReadAllText(GamesCache);
+                var json = File.ReadAllText(_gamesCache);
                 CachedGames = JsonConvert.DeserializeObject<List<DetectedGame>>(json) ?? new List<DetectedGame>();
                 
                 // Validate cached games still exist
                 CachedGames = CachedGames.Where(g => File.Exists(g.ExePath)).ToList();
             }
         }
-        catch { CachedGames = new List<DetectedGame>(); }
+        catch (Exception ex)
+        {
+            LastPersistenceError = ex.Message;
+            CachedGames = new List<DetectedGame>();
+        }
     }
 
     public void Save()
     {
         try
         {
-            File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(Settings, Formatting.Indented));
+            Settings.SchemaVersion = CurrentSchemaVersion;
+            FileTreeService.WriteAllTextAtomic(_settingsFile, JsonConvert.SerializeObject(Settings, Formatting.Indented));
+            ProtectPath(_settingsFile, isDirectory: false);
+            LastPersistenceError = null;
         }
-        catch { }
+        catch (Exception ex)
+        {
+            LastPersistenceError = ex.Message;
+        }
     }
 
     public void SaveGames(IEnumerable<DetectedGame> games)
@@ -74,25 +92,67 @@ public class SettingsService
         try
         {
             CachedGames = games.ToList();
-            File.WriteAllText(GamesCache, JsonConvert.SerializeObject(CachedGames, Formatting.Indented));
+            FileTreeService.WriteAllTextAtomic(_gamesCache, JsonConvert.SerializeObject(CachedGames, Formatting.Indented));
+            ProtectPath(_gamesCache, isDirectory: false);
+            LastPersistenceError = null;
         }
-        catch { }
+        catch (Exception ex)
+        {
+            LastPersistenceError = ex.Message;
+        }
     }
 
     public void AddGame(DetectedGame game)
     {
-        if (!CachedGames.Any(g => g.ExePath.Equals(game.ExePath, StringComparison.OrdinalIgnoreCase)))
+        if (!CachedGames.Any(g => g.ExePath.Equals(game.ExePath, PlatformService.PathComparison)))
         {
             CachedGames.Add(game);
             SaveGames(CachedGames);
         }
     }
 
-    public static string GetSettingsFolder() => SettingsFolder;
+    public static string GetSettingsFolder() => DefaultSettingsFolder;
+
+    private void MigrateSettings()
+    {
+        Settings.NexusGameMappings ??= new Dictionary<string, NexusGameMapping>();
+        Settings.SchemaVersion = CurrentSchemaVersion;
+    }
+
+    private static string ResolveDefaultSettingsFolder()
+    {
+        string? overridePath = Environment.GetEnvironmentVariable("RPGMODDER_DATA_HOME");
+        if (!string.IsNullOrWhiteSpace(overridePath))
+        {
+            return Path.GetFullPath(overridePath);
+        }
+
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "RPGModder");
+    }
+
+    private static void ProtectPath(string path, bool isDirectory)
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        try
+        {
+            File.SetUnixFileMode(path, isDirectory
+                ? UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                : UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            // Some network filesystems do not expose Unix modes; persistence can still continue.
+        }
+    }
 }
 
 public class AppSettings
 {
+    public int SchemaVersion { get; set; } = SettingsService.CurrentSchemaVersion;
     public string? LastGamePath { get; set; }
     public bool AutoScanOnStartup { get; set; } = false;
     public DateTime LastScanTime { get; set; }

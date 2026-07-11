@@ -6,6 +6,7 @@ namespace RPGModder.Core.Services;
 // Manages mod downloads with progress tracking and queue support
 public class DownloadManager : IDisposable
 {
+    private const long MaximumDownloadBytes = 10L * 1024L * 1024L * 1024L;
     private readonly HttpClient _http;
     private readonly string _downloadFolder;
     private readonly ConcurrentDictionary<string, DownloadItem> _downloads = new();
@@ -25,10 +26,7 @@ public class DownloadManager : IDisposable
         _http = new HttpClient();
 
         // Changed from UserProfile/Downloads to Roaming AppData
-        _downloadFolder = downloadFolder ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "RPGModder", "TempDownloads"
-        );
+        _downloadFolder = downloadFolder ?? Path.Combine(SettingsService.GetSettingsFolder(), "TempDownloads");
 
         if (!Directory.Exists(_downloadFolder))
             Directory.CreateDirectory(_downloadFolder);
@@ -41,12 +39,22 @@ public class DownloadManager : IDisposable
         NexusMod? modInfo = null,
         NexusModFile? fileInfo = null)
     {
+        if (!Uri.TryCreate(downloadUrl, UriKind.Absolute, out Uri? uri) || uri.Scheme != Uri.UriSchemeHttps)
+        {
+            throw new InvalidDataException("Downloads must use an HTTPS URL.");
+        }
+
+        string id = Guid.NewGuid().ToString("N");
+        string safeFileName = SanitizeFileName(fileName);
         var item = new DownloadItem
         {
-            Id = Guid.NewGuid().ToString(),
+            Id = id,
             Url = downloadUrl,
-            FileName = SanitizeFileName(fileName),
-            DestinationPath = Path.Combine(_downloadFolder, SanitizeFileName(fileName)),
+            FileName = safeFileName,
+            DestinationPath = SafePathService.ResolveContainedPath(
+                _downloadFolder,
+                $"{id}-{safeFileName}",
+                "Download destination"),
             Status = DownloadStatus.Queued,
             ModInfo = modInfo,
             FileInfo = fileInfo,
@@ -81,6 +89,10 @@ public class DownloadManager : IDisposable
 
             using var response = await _http.GetAsync(item.Url, HttpCompletionOption.ResponseHeadersRead, item.CancelToken);
             response.EnsureSuccessStatusCode();
+            if (response.Content.Headers.ContentLength > MaximumDownloadBytes)
+            {
+                throw new InvalidDataException("The download exceeds the 10 GB safety limit.");
+            }
 
             // Resolve the real filename from Content-Disposition header or URL
             // This fixes the NXM flow where only mod name (no extension) is passed
@@ -88,7 +100,10 @@ public class DownloadManager : IDisposable
             if (resolvedFileName != item.FileName)
             {
                 item.FileName = resolvedFileName;
-                item.DestinationPath = Path.Combine(_downloadFolder, resolvedFileName);
+                item.DestinationPath = SafePathService.ResolveContainedPath(
+                    _downloadFolder,
+                    $"{item.Id}-{resolvedFileName}",
+                    "Download destination");
             }
 
             item.TotalBytes = response.Content.Headers.ContentLength ?? 0;
@@ -107,6 +122,10 @@ public class DownloadManager : IDisposable
                 {
                     await fileStream.WriteAsync(buffer, 0, bytesRead, item.CancelToken);
                     totalRead += bytesRead;
+                    if (totalRead > MaximumDownloadBytes)
+                    {
+                        throw new InvalidDataException("The download exceeded the 10 GB safety limit.");
+                    }
                     item.DownloadedBytes = totalRead;
 
                     // Throttle progress updates to every 100ms
@@ -192,10 +211,13 @@ public class DownloadManager : IDisposable
     // Gets the download folder path
     public string GetDownloadFolder() => _downloadFolder;
 
-    private string SanitizeFileName(string fileName)
+    private static string SanitizeFileName(string fileName)
     {
         var invalid = Path.GetInvalidFileNameChars();
-        return string.Join("_", fileName.Split(invalid, StringSplitOptions.RemoveEmptyEntries));
+        string sanitized = string.Join("_", fileName.Split(invalid, StringSplitOptions.RemoveEmptyEntries)).Trim();
+        return string.IsNullOrWhiteSpace(sanitized) || sanitized is "." or ".."
+            ? "download.zip"
+            : sanitized;
     }
 
     // Extracts the real filename from HTTP response headers or URL.

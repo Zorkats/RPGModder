@@ -11,7 +11,7 @@ public class ConflictDetectionService
         // Build a map of file -> list of mods that touch it
         var fileToMods = new Dictionary<string, List<ModListItem>>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var mod in mods)
+        foreach (var mod in mods.Where(item => item.IsEnabled))
         {
             var files = mod.GetAffectedFiles();
             foreach (var file in files)
@@ -28,7 +28,7 @@ public class ConflictDetectionService
             var conflictingFiles = new List<string>();
             var conflictingMods = new HashSet<string>();
 
-            var myFiles = mod.GetAffectedFiles();
+            var myFiles = mod.IsEnabled ? mod.GetAffectedFiles() : new HashSet<string>();
             foreach (var file in myFiles)
             {
                 if (fileToMods.TryGetValue(file, out var modsForFile) && modsForFile.Count > 1)
@@ -86,28 +86,35 @@ public class ConflictDetectionService
     {
         var report = new ConflictReport();
         
-        // Build file -> mods map
-        var fileToMods = new Dictionary<string, List<ModListItem>>(StringComparer.OrdinalIgnoreCase);
+        var fileToIntents = new Dictionary<string, List<(ModListItem Mod, ModFileIntent Intent)>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var mod in mods.Where(m => m.IsEnabled))
         {
-            var files = mod.GetAffectedFiles();
-            foreach (var file in files)
+            foreach (ModFileIntent intent in mod.GetFileIntents())
             {
-                if (!fileToMods.ContainsKey(file))
-                    fileToMods[file] = new List<ModListItem>();
-                fileToMods[file].Add(mod);
+                if (!fileToIntents.ContainsKey(intent.Target))
+                    fileToIntents[intent.Target] = new List<(ModListItem, ModFileIntent)>();
+                fileToIntents[intent.Target].Add((mod, intent));
             }
         }
 
-        // Find all conflicts
-        foreach (var kvp in fileToMods.Where(k => k.Value.Count > 1))
+        foreach (var kvp in fileToIntents.Where(item => item.Value.Select(value => value.Mod).Distinct().Count() > 1))
         {
+            List<ModListItem> participants = kvp.Value.Select(value => value.Mod).Distinct().ToList();
+            bool allPatches = kvp.Value.All(value => value.Intent.Kind == ModFileIntentKind.JsonPatch);
+            bool jsonTarget = Path.GetExtension(kvp.Key).Equals(".json", StringComparison.OrdinalIgnoreCase);
+            ConflictKind kind = allPatches
+                ? ConflictKind.SemanticMerge
+                : jsonTarget
+                    ? ConflictKind.StructuredFileMerge
+                    : ConflictKind.FileOverwrite;
             var conflict = new FileConflict
             {
                 FilePath = kvp.Key,
-                Mods = kvp.Value.Select(m => m.Name).ToList(),
-                Winner = kvp.Value.Last().Name // Last in load order wins
+                Mods = participants.Select(mod => mod.Name).ToList(),
+                Winner = kind == ConflictKind.FileOverwrite ? participants.Last().Name : "Merged",
+                Kind = kind,
+                IsMergeable = kind != ConflictKind.FileOverwrite
             };
             report.Conflicts.Add(conflict);
         }
@@ -128,4 +135,15 @@ public class FileConflict
     public string FilePath { get; set; } = "";
     public List<string> Mods { get; set; } = new();
     public string Winner { get; set; } = ""; // The mod that will "win" (last in load order)
+    public ConflictKind Kind { get; set; }
+    public bool IsMergeable { get; set; }
+    public string Participants => string.Join("  >  ", Mods);
+    public string Resolution => IsMergeable ? $"{Kind}: merged in load order" : $"Winner: {Winner}";
+}
+
+public enum ConflictKind
+{
+    FileOverwrite,
+    StructuredFileMerge,
+    SemanticMerge
 }

@@ -1,4 +1,3 @@
-using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -41,46 +40,32 @@ public class SteamLaunchService
         { "Look Outside", 2714540 },
     };
 
-    // Get the Steam installation path from registry
     public string? GetSteamPath()
     {
-        // Registry is only available on Windows
-        if (!OperatingSystem.IsWindows())
-            return null;
-
-        try
-        {
-            // Try 64-bit registry first
-            using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Wow6432Node\Valve\Steam");
-            if (key != null)
-            {
-                var path = key.GetValue("InstallPath") as string;
-                if (!string.IsNullOrEmpty(path) && Directory.Exists(path))
-                    return path;
-            }
-
-            // Try 32-bit registry
-            using var key32 = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Valve\Steam");
-            if (key32 != null)
-            {
-                var path = key32.GetValue("InstallPath") as string;
-                if (!string.IsNullOrEmpty(path) && Directory.Exists(path))
-                    return path;
-            }
-        }
-        catch
-        {
-            // Registry access may fail on restricted systems
-        }
-
-        return null;
+        return SteamLibraryLocator.GetSteamRoots().FirstOrDefault();
     }
 
     // Check if Steam is installed
     public bool IsSteamInstalled()
     {
-        var steamPath = GetSteamPath();
-        return !string.IsNullOrEmpty(steamPath) && File.Exists(Path.Combine(steamPath, "steam.exe"));
+        if (OperatingSystem.IsWindows())
+        {
+            string? steamPath = GetSteamPath();
+            return !string.IsNullOrEmpty(steamPath) && File.Exists(Path.Combine(steamPath, "steam.exe"));
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            if (PlatformService.FindExecutable("steam") != null)
+                return true;
+
+            string flatpakData = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".var", "app", "com.valvesoftware.Steam");
+            return Directory.Exists(flatpakData) && PlatformService.FindExecutable("flatpak") != null;
+        }
+
+        return false;
     }
 
     // Detect Steam AppID for a game from various sources
@@ -162,7 +147,7 @@ public class SteamLaunchService
                     var gamePath = Path.Combine(manifestDir, "common", installDir);
                     
                     // Check if this manifest is for our game
-                    if (Path.GetFullPath(gamePath).Equals(Path.GetFullPath(gameRoot), StringComparison.OrdinalIgnoreCase))
+                    if (Path.GetFullPath(gamePath).Equals(Path.GetFullPath(gameRoot), PlatformService.PathComparison))
                     {
                         // Extract appid
                         var appIdMatch = Regex.Match(content, @"""appid""\s+""(\d+)""");
@@ -185,6 +170,26 @@ public class SteamLaunchService
     {
         try
         {
+            if (OperatingSystem.IsLinux())
+            {
+                string? steam = PlatformService.FindExecutable("steam");
+                if (steam != null)
+                {
+                    Process.Start(CreateStartInfo(steam, ["-applaunch", appId.ToString()]));
+                    return true;
+                }
+
+                string? flatpak = PlatformService.FindExecutable("flatpak");
+                if (flatpak != null)
+                {
+                    Process.Start(CreateStartInfo(flatpak,
+                        ["run", "com.valvesoftware.Steam", "-applaunch", appId.ToString()]));
+                    return true;
+                }
+
+                return false;
+            }
+
             var url = $"steam://rungameid/{appId}";
             Process.Start(new ProcessStartInfo
             {
@@ -212,7 +217,9 @@ public class SteamLaunchService
             }
         }
 
-        // Fallback to direct launch
+        if (OperatingSystem.IsLinux() && exePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            return false;
+
         try
         {
             Process.Start(new ProcessStartInfo
@@ -239,5 +246,17 @@ public class SteamLaunchService
                 return $"Steam (AppID: {appId})";
         }
         return "Direct";
+    }
+
+    private static ProcessStartInfo CreateStartInfo(string executable, IEnumerable<string> arguments)
+    {
+        var info = new ProcessStartInfo
+        {
+            FileName = executable,
+            UseShellExecute = false
+        };
+        foreach (string argument in arguments)
+            info.ArgumentList.Add(argument);
+        return info;
     }
 }

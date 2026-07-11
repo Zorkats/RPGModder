@@ -148,6 +148,28 @@ public class ModListItem : INotifyPropertyChanged
         return files;
     }
 
+    public IReadOnlyList<ModFileIntent> GetFileIntents()
+    {
+        var intents = new List<ModFileIntent>();
+        foreach (FileOperation operation in Manifest.FileOps)
+        {
+            if (!string.IsNullOrWhiteSpace(operation.Target))
+            {
+                intents.Add(new ModFileIntent(NormalizePath(operation.Target), ModFileIntentKind.Replace));
+            }
+        }
+
+        foreach (JsonPatch patch in Manifest.JsonPatches)
+        {
+            if (!string.IsNullOrWhiteSpace(patch.Target))
+            {
+                intents.Add(new ModFileIntent(NormalizePath(patch.Target), ModFileIntentKind.JsonPatch));
+            }
+        }
+
+        return intents;
+    }
+
     private static string NormalizePath(string path)
     {
         return path.Replace('\\', '/').ToLowerInvariant();
@@ -167,3 +189,11 @@ public class ModListItem : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 }
+
+public enum ModFileIntentKind
+{
+    Replace,
+    JsonPatch
+}
+
+public sealed record ModFileIntent(string Target, ModFileIntentKind Kind);

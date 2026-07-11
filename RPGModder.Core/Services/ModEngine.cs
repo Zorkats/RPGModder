@@ -16,6 +16,7 @@ public class ModEngine
     private readonly string _modsRootPath;
     private readonly bool _usesWwwFolder;
     private readonly JsonMergeService _merger = new();
+    private readonly GameWorkspacePaths _workspace;
 
     // --- Configuration ---
     public bool UseMerging { get; set; } = true;
@@ -25,6 +26,9 @@ public class ModEngine
     // --- State & Reporting ---
     public bool JustCreatedSaveBackup { get; private set; } = false;
     public List<MergeReport> LastMergeReports { get; private set; } = new();
+    public OperationResult LastOperationResult { get; private set; } = new();
+    public IReadOnlyList<string> RecoveredTransactions { get; }
+    public WorkspaceMigrationResult MigrationResult { get; }
 
     public string ContentPath => _contentPath;
     public bool UsesWwwFolder => _usesWwwFolder;
@@ -39,11 +43,18 @@ public class ModEngine
                           Directory.Exists(Path.Combine(wwwPath, "data")));
 
         _contentPath = _usesWwwFolder ? wwwPath : _gamePath;
-        _backupPath = Path.Combine(_gamePath, "ModManager_Backups", "Clean_Vanilla");
-        _modsRootPath = Path.Combine(_gamePath, "Mods");
+        _workspace = new GameWorkspacePaths(_gamePath);
+        MigrationResult = new WorkspaceMigrationService().ImportLegacyLayout(_workspace);
+        _backupPath = _workspace.CleanBackup;
+        _modsRootPath = _workspace.Mods;
 
         if (!Directory.Exists(_backupPath)) Directory.CreateDirectory(_backupPath);
         if (!Directory.Exists(_modsRootPath)) Directory.CreateDirectory(_modsRootPath);
+        RecoveredTransactions = DeploymentTransaction.RecoverInterrupted(
+            _contentPath,
+            _workspace.Transactions,
+            FilePolicyService.TransactionalFolders,
+            FilePolicyService.ProtectedRootFiles);
     }
 
     // ==================================================================================
@@ -131,7 +142,7 @@ public class ModEngine
             liveSavePath = Path.Combine(_gamePath, "save");
         }
 
-        string timeCapsulePath = Path.Combine(_gamePath, "ModManager_Backups", "Saves", "ORIGINAL_VANILLA");
+        string timeCapsulePath = Path.Combine(_workspace.SaveBackups, "original-vanilla");
 
         if (!Directory.Exists(timeCapsulePath) && Directory.Exists(liveSavePath))
         {
@@ -171,9 +182,15 @@ public class ModEngine
             liveSavePath = Path.Combine(_gamePath, "save");
         }
 
-        string storageRoot = Path.Combine(_gamePath, "ModManager_Backups", "ProfileSaves");
-        string oldStorage = Path.Combine(storageRoot, oldProfileName);
-        string newStorage = Path.Combine(storageRoot, newProfileName);
+        string storageRoot = _workspace.ProfileSaves;
+        string oldStorage = SafePathService.ResolveContainedPath(
+            storageRoot,
+            SafePathService.ValidateDirectoryName(oldProfileName, "Old profile name"),
+            "Old profile saves");
+        string newStorage = SafePathService.ResolveContainedPath(
+            storageRoot,
+            SafePathService.ValidateDirectoryName(newProfileName, "New profile name"),
+            "New profile saves");
 
         if (!Directory.Exists(liveSavePath)) Directory.CreateDirectory(liveSavePath);
         if (!Directory.Exists(oldStorage)) Directory.CreateDirectory(oldStorage);
@@ -185,7 +202,9 @@ public class ModEngine
             .ToList();
 
         string stagingDir = Path.Combine(storageRoot, $"_swap_staging_{Guid.NewGuid():N}");
+        string rollbackDir = Path.Combine(storageRoot, $"_swap_rollback_{Guid.NewGuid():N}");
         Directory.CreateDirectory(stagingDir);
+        Directory.CreateDirectory(rollbackDir);
 
         try
         {
@@ -193,6 +212,7 @@ public class ModEngine
             {
                 string fileName = Path.GetFileName(file);
                 File.Copy(file, Path.Combine(oldStorage, fileName), true);
+                File.Copy(file, Path.Combine(rollbackDir, fileName), true);
             }
 
             if (Directory.Exists(newStorage))
@@ -216,9 +236,28 @@ public class ModEngine
                 File.Move(file, dest, true);
             }
         }
+        catch
+        {
+            foreach (string file in Directory.GetFiles(liveSavePath))
+            {
+                if (extensions.Any(ext => file.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
+                {
+                    File.Delete(file);
+                }
+            }
+
+            foreach (string file in Directory.GetFiles(rollbackDir))
+            {
+                File.Copy(file, Path.Combine(liveSavePath, Path.GetFileName(file)), true);
+            }
+
+            throw;
+        }
         finally
         {
             try { if (Directory.Exists(stagingDir)) Directory.Delete(stagingDir, true); }
+            catch { }
+            try { if (Directory.Exists(rollbackDir)) Directory.Delete(rollbackDir, true); }
             catch { }
         }
     }
@@ -227,9 +266,42 @@ public class ModEngine
     // PHASE 3: REBUILDING ENGINE
     // ==================================================================================
 
-    public void RebuildGame(ModProfile profile)
+    public OperationResult RebuildGame(ModProfile profile)
     {
         LastMergeReports.Clear();
+        LastOperationResult = new OperationResult();
+
+        using var transaction = DeploymentTransaction.Begin(
+            _contentPath,
+            _workspace.Transactions,
+            FilePolicyService.TransactionalFolders,
+            FilePolicyService.ProtectedRootFiles);
+
+        try
+        {
+            RebuildGameCore(profile, LastOperationResult);
+            if (!LastOperationResult.Success)
+            {
+                transaction.Rollback();
+                WriteDeploymentHistory(profile, LastOperationResult);
+                return LastOperationResult;
+            }
+
+            transaction.Commit();
+            WriteDeploymentHistory(profile, LastOperationResult);
+            return LastOperationResult;
+        }
+        catch (Exception ex)
+        {
+            LastOperationResult.AddError("deployment.failed", ex.Message);
+            transaction.Rollback();
+            WriteDeploymentHistory(profile, LastOperationResult);
+            return LastOperationResult;
+        }
+    }
+
+    private void RebuildGameCore(ModProfile profile, OperationResult result)
+    {
 
         // 1. Restore Vanilla State
         foreach (var folder in FilePolicyService.ProtectedFolders)
@@ -255,24 +327,27 @@ public class ModEngine
         // 2. Apply Mods
         if (UseMerging)
         {
-            RebuildWithMerging(profile);
+            RebuildWithMerging(profile, result);
         }
         else
         {
-            RebuildSequential(profile);
+            RebuildSequential(profile, result);
         }
 
         // 3. Synchronize FHMM JSON states right before the game is allowed to launch
         var fhmmService = new FhmmCompatibilityService();
-        var profileMods = profile.EnabledMods.Select(name => new ModListItem(null, name, true));
+        var profileMods = profile.EnabledMods.Select(name => new ModListItem(new ModManifest(), name, true));
         fhmmService.EnforceFhmmStates(_gamePath, _usesWwwFolder, profileMods);
     }
 
-    private void RebuildSequential(ModProfile profile)
+    private void RebuildSequential(ModProfile profile, OperationResult result)
     {
         foreach (string modFolderName in profile.EnabledMods)
         {
-            string modPath = Path.Combine(_modsRootPath, modFolderName);
+            string modPath = SafePathService.ResolveContainedPath(
+                _modsRootPath,
+                SafePathService.ValidateDirectoryName(modFolderName, "Enabled mod name"),
+                "Enabled mod path");
             string manifestPath = Path.Combine(modPath, "mod.json");
 
             if (File.Exists(manifestPath))
@@ -287,12 +362,19 @@ public class ModEngine
                         ApplyMod(modPath, manifest);
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    result.AddError("manifest.invalid", ex.Message, modFolderName);
+                }
+            }
+            else
+            {
+                result.AddError("manifest.missing", "The enabled mod has no mod.json file.", modFolderName);
             }
         }
     }
 
-    private void RebuildWithMerging(ModProfile profile)
+    private void RebuildWithMerging(ModProfile profile, OperationResult result)
     {
         var fileOperations = new Dictionary<string, List<(string ModPath, FileOperation Op)>>(StringComparer.OrdinalIgnoreCase);
         var jsonPatches = new Dictionary<string, List<(string ModName, JObject Data)>>(StringComparer.OrdinalIgnoreCase);
@@ -300,10 +382,17 @@ public class ModEngine
 
         foreach (string modFolderName in profile.EnabledMods)
         {
-            string modPath = Path.Combine(_modsRootPath, modFolderName);
+            string modPath = SafePathService.ResolveContainedPath(
+                _modsRootPath,
+                SafePathService.ValidateDirectoryName(modFolderName, "Enabled mod name"),
+                "Enabled mod path");
             string manifestPath = Path.Combine(modPath, "mod.json");
 
-            if (!File.Exists(manifestPath)) continue;
+            if (!File.Exists(manifestPath))
+            {
+                result.AddError("manifest.missing", "The enabled mod has no mod.json file.", modFolderName);
+                continue;
+            }
 
             try
             {
@@ -328,14 +417,22 @@ public class ModEngine
 
                 allPlugins.AddRange(manifest.PluginsRegistry);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                result.AddError("manifest.invalid", ex.Message, modFolderName);
+            }
+        }
+
+        if (!result.Success)
+        {
+            return;
         }
 
         foreach (var kvp in fileOperations)
         {
             string targetPath = kvp.Key;
             var operations = kvp.Value;
-            string fullTargetPath = Path.Combine(_contentPath, targetPath);
+            string fullTargetPath = SafePathService.ResolveContainedPath(_contentPath, targetPath, "Manifest target");
             string ext = Path.GetExtension(targetPath).ToLowerInvariant();
             string fileName = Path.GetFileName(targetPath).ToLowerInvariant();
 
@@ -357,10 +454,12 @@ public class ModEngine
             {
                 var lastOp = operations.Last();
                 string sourceFile = ResolveModSourcePath(lastOp.ModPath, lastOp.Op.Source);
-                if (File.Exists(sourceFile))
+                if (!File.Exists(sourceFile))
                 {
-                    CopyOrLinkFile(sourceFile, fullTargetPath);
+                    throw new FileNotFoundException("A manifest source file is missing.", sourceFile);
                 }
+
+                CopyOrLinkFile(sourceFile, fullTargetPath);
             }
         }
 
@@ -385,12 +484,14 @@ public class ModEngine
         {
             string sourceFile = ResolveModSourcePath(modFolder, op.Source);
             string targetPath = NormalizeTargetPath(op.Target);
-            string targetFile = Path.Combine(_contentPath, targetPath);
+            string targetFile = SafePathService.ResolveContainedPath(_contentPath, targetPath, "Manifest target");
 
-            if (File.Exists(sourceFile))
+            if (!File.Exists(sourceFile))
             {
-                CopyOrLinkFile(sourceFile, targetFile);
+                throw new FileNotFoundException("A manifest source file is missing.", sourceFile);
             }
+
+            CopyOrLinkFile(sourceFile, targetFile);
         }
 
         foreach (var patch in manifest.JsonPatches)
@@ -415,10 +516,12 @@ public class ModEngine
         foreach (var (modPath, op) in operations)
         {
             string sourceFile = ResolveModSourcePath(modPath, op.Source);
-            if (File.Exists(sourceFile))
+            if (!File.Exists(sourceFile))
             {
-                modContents.Add(File.ReadAllText(sourceFile));
+                throw new FileNotFoundException("A manifest source file is missing.", sourceFile);
             }
+
+            modContents.Add(File.ReadAllText(sourceFile));
         }
 
         if (modContents.Count == 0) return;
@@ -432,8 +535,8 @@ public class ModEngine
 
     private void ApplyMergedJson(string targetPath, List<(string ModPath, FileOperation Op)> operations)
     {
-        string fullTargetPath = Path.Combine(_contentPath, targetPath);
-        string backupPath = Path.Combine(_backupPath, targetPath);
+        string fullTargetPath = SafePathService.ResolveContainedPath(_contentPath, targetPath, "Manifest target");
+        string backupPath = SafePathService.ResolveContainedPath(_backupPath, targetPath, "Backup target");
 
         string baseJson = "[]";
         if (File.Exists(backupPath))
@@ -445,10 +548,12 @@ public class ModEngine
         foreach (var (modPath, op) in operations)
         {
             string sourceFile = ResolveModSourcePath(modPath, op.Source);
-            if (File.Exists(sourceFile))
+            if (!File.Exists(sourceFile))
             {
-                modJsons.Add(File.ReadAllText(sourceFile));
+                throw new FileNotFoundException("A manifest source file is missing.", sourceFile);
             }
+
+            modJsons.Add(File.ReadAllText(sourceFile));
         }
 
         if (modJsons.Count == 0) return;
@@ -463,27 +568,23 @@ public class ModEngine
 
     private void ApplyMergedJsonPatches(string targetPath, List<(string ModName, JObject Data)> patches)
     {
-        string fullPath = Path.Combine(_contentPath, targetPath);
+        string fullPath = SafePathService.ResolveContainedPath(_contentPath, targetPath, "JSON patch target");
         if (!File.Exists(fullPath)) return;
 
-        try
+        string jsonContent = File.ReadAllText(fullPath);
+        JObject original = JObject.Parse(jsonContent);
+
+        foreach (var (_, patchData) in patches)
         {
-            string jsonContent = File.ReadAllText(fullPath);
-            JObject original = JObject.Parse(jsonContent);
-
-            foreach (var (modName, patchData) in patches)
-            {
-                MergeJsonObjects(original, patchData);
-            }
-
-            File.WriteAllText(fullPath, original.ToString(Formatting.Indented));
+            MergeJsonObjects(original, patchData);
         }
-        catch { }
+
+        File.WriteAllText(fullPath, original.ToString(Formatting.Indented));
     }
 
     private void ApplyJsonPatch(string targetFileRelative, JObject mergeData)
     {
-        string fullPath = Path.Combine(_contentPath, targetFileRelative);
+        string fullPath = SafePathService.ResolveContainedPath(_contentPath, targetFileRelative, "JSON patch target");
 
         if (File.Exists(fullPath))
         {
@@ -650,13 +751,7 @@ public class ModEngine
 
     private void CopyDirectory(string sourceDir, string destinationDir)
     {
-        Directory.CreateDirectory(destinationDir);
-
-        foreach (var file in Directory.GetFiles(sourceDir))
-            File.Copy(file, Path.Combine(destinationDir, Path.GetFileName(file)), true);
-
-        foreach (var directory in Directory.GetDirectories(sourceDir))
-            CopyDirectory(directory, Path.Combine(destinationDir, Path.GetFileName(directory)));
+        FileTreeService.CopyDirectory(sourceDir, destinationDir);
     }
 
     private bool FilesAreEqual(string path1, string path2)
@@ -709,19 +804,19 @@ public class ModEngine
 
     private string ResolveModSourcePath(string modFolder, string sourcePath)
     {
-        string exactPath = Path.Combine(modFolder, sourcePath);
+        string exactPath = SafePathService.ResolveContainedPath(modFolder, sourcePath, "Manifest source");
         if (File.Exists(exactPath)) return exactPath;
 
         if (_usesWwwFolder && !sourcePath.StartsWith("www", StringComparison.OrdinalIgnoreCase))
         {
-            string wwwPath = Path.Combine(modFolder, "www", sourcePath);
+            string wwwPath = SafePathService.ResolveContainedPath(modFolder, Path.Combine("www", sourcePath), "Manifest source");
             if (File.Exists(wwwPath)) return wwwPath;
         }
 
         if (sourcePath.StartsWith("www/", StringComparison.OrdinalIgnoreCase) ||
             sourcePath.StartsWith("www\\", StringComparison.OrdinalIgnoreCase))
         {
-            string withoutWww = Path.Combine(modFolder, sourcePath.Substring(4));
+            string withoutWww = SafePathService.ResolveContainedPath(modFolder, sourcePath.Substring(4), "Manifest source");
             if (File.Exists(withoutWww)) return withoutWww;
         }
 
@@ -748,5 +843,18 @@ public class ModEngine
         }
 
         return targetPath;
+    }
+
+    private void WriteDeploymentHistory(ModProfile profile, OperationResult result)
+    {
+        var entry = new
+        {
+            timestampUtc = DateTime.UtcNow,
+            success = result.Success,
+            enabledMods = profile.EnabledMods.ToArray(),
+            diagnostics = result.Diagnostics
+        };
+        string path = Path.Combine(_workspace.History, $"deployment-{DateTime.UtcNow:yyyyMMddHHmmssfff}.json");
+        FileTreeService.WriteAllTextAtomic(path, JsonConvert.SerializeObject(entry, Formatting.Indented));
     }
 }

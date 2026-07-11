@@ -2,8 +2,6 @@
 using System.Diagnostics;
 using System.IO;
 using System.Net.WebSockets;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -15,10 +13,12 @@ public class NexusSsoService
 {
     private readonly string _applicationSlug;
     private readonly Uri _webSocketUri = new("wss://sso.nexusmods.com");
+    private readonly ICredentialStoreService _credentialStore;
 
-    public NexusSsoService(string applicationSlug)
+    public NexusSsoService(string applicationSlug, ICredentialStoreService? credentialStore = null)
     {
         _applicationSlug = applicationSlug;
+        _credentialStore = credentialStore ?? new CredentialStoreService();
     }
 
     // Main entry point for the authentication flow
@@ -129,59 +129,24 @@ public class NexusSsoService
         catch
         {
             // Fallback for Linux environments where UseShellExecute might fail
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            if (OperatingSystem.IsLinux())
             {
                 Process.Start("xdg-open", url);
             }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            else if (OperatingSystem.IsMacOS())
             {
                 Process.Start("open", url);
             }
         }
     }
 
-    // Encrypts the raw API key using Windows DPAPI bound to the current user
-    // Returns a Base64 string safe for saving to a JSON config file
-    public string EncryptKeyForStorage(string rawKey)
-    {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            // DPAPI is Windows-only. For Linux/Mac compatibility, we fallback to plain text or a different cipher
-            return rawKey;
-        }
+    public bool IsSecureStorageAvailable => _credentialStore.IsAvailable;
 
-        byte[] plainBytes = Encoding.UTF8.GetBytes(rawKey);
-        byte[] encryptedBytes = ProtectedData.Protect(plainBytes, null, DataProtectionScope.CurrentUser);
+    public bool IsSecureStoredValue(string storedValue) => _credentialStore.IsSecureValue(storedValue);
 
-        return Convert.ToBase64String(encryptedBytes);
-    }
+    public string EncryptKeyForStorage(string rawKey) => _credentialStore.Store(rawKey);
 
-    // Decrypts the Base64 API key back to plain text for HTTP requests
-    // Decrypts the Base64 API key back to plain text for HTTP requests
-    public string DecryptKeyFromStorage(string encryptedBase64)
-    {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            return encryptedBase64;
-        }
+    public string DecryptKeyFromStorage(string encryptedBase64) => _credentialStore.Retrieve(encryptedBase64);
 
-        try
-        {
-            byte[] encryptedBytes = Convert.FromBase64String(encryptedBase64);
-            byte[] plainBytes = ProtectedData.Unprotect(encryptedBytes, null, DataProtectionScope.CurrentUser);
-
-            return Encoding.UTF8.GetString(plainBytes);
-        }
-        catch (FormatException)
-        {
-            // The string is not Base64. This means it's a legacy plain-text key from v1.1.2 or older.
-            // We just return it as-is so the app can still log the user in.
-            return encryptedBase64;
-        }
-        catch (CryptographicException)
-        {
-            // This happens if the file was moved to a different PC or user account
-            return string.Empty;
-        }
-    }
+    public void DeleteStoredKey(string? storedValue = null) => _credentialStore.Delete(storedValue);
 }

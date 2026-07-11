@@ -25,6 +25,11 @@ public static class FilePolicyService
         "index.html", "package.json"
     };
 
+    public static readonly string[] TransactionalFolders = ProtectedFolders
+        .Concat(new[] { "save" })
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
     // System binaries that should never be packed into a mod
     private static readonly HashSet<string> IgnoredExtensions = new(StringComparer.OrdinalIgnoreCase)
     {

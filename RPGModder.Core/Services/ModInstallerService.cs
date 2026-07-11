@@ -16,7 +16,7 @@ public class ModInstallerService
         string modsDirectory,
         int nexusId,
         string version,
-        string existingFolderName = null)
+        string? existingFolderName = null)
     {
         // 1. Install normally first to unpack everything
         var result = InstallMod(sourcePath, modsDirectory, existingFolderName);
@@ -156,7 +156,7 @@ public class ModInstallerService
             if (!string.IsNullOrEmpty(targetFolderName))
             {
                 // Use the existing folder name
-                folderName = targetFolderName;
+                folderName = SafePathService.ValidateDirectoryName(targetFolderName, "Existing mod folder name");
             }
             else
             {
@@ -166,28 +166,61 @@ public class ModInstallerService
                     : new DirectoryInfo(folderPath).Name;
 
                 if (string.IsNullOrWhiteSpace(folderName)) folderName = $"Mod_{DateTime.Now.Ticks}";
+                folderName = SafePathService.ValidateDirectoryName(folderName, "Mod ID");
             }
 
-            string targetPath = Path.Combine(modsDirectory, folderName);
+            Directory.CreateDirectory(modsDirectory);
+            string targetPath = SafePathService.ResolveContainedPath(modsDirectory, folderName, "Mod install target");
+            string stagingName = $".install-{Guid.NewGuid():N}";
+            string stagingPath = SafePathService.ResolveContainedPath(modsDirectory, stagingName, "Mod install staging path");
+            string rollbackPath = SafePathService.ResolveContainedPath(modsDirectory, $".rollback-{Guid.NewGuid():N}", "Mod rollback path");
 
-            // Nuke existing folder (Update logic)
-            if (Directory.Exists(targetPath))
-                Directory.Delete(targetPath, true);
-
-            CopyDirectory(folderPath, targetPath);
-
-            // Fix target paths in mod.json so they're game-content-relative.
             NormalizeManifestTargets(manifest);
+            ValidateManifestPaths(manifest, folderPath);
 
             // HYDRATION: Calculate FHMM state on install to prevent UI lag
             manifest.Metadata.IsFhmmMod = manifest.FileOps.Any(op =>
                 op.Target.Contains("mods/", StringComparison.OrdinalIgnoreCase) ||
                 op.Target.Contains("_moddata/", StringComparison.OrdinalIgnoreCase));
 
-            // Save the cleaned mod.json
-            File.WriteAllText(
-                Path.Combine(targetPath, "mod.json"),
-                JsonConvert.SerializeObject(manifest, Formatting.Indented));
+            try
+            {
+                FileTreeService.CopyDirectory(folderPath, stagingPath);
+                FileTreeService.WriteAllTextAtomic(
+                    Path.Combine(stagingPath, "mod.json"),
+                    JsonConvert.SerializeObject(manifest, Formatting.Indented));
+
+                if (Directory.Exists(targetPath))
+                {
+                    Directory.Move(targetPath, rollbackPath);
+                }
+
+                Directory.Move(stagingPath, targetPath);
+                if (Directory.Exists(rollbackPath))
+                {
+                    try
+                    {
+                        Directory.Delete(rollbackPath, true);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            catch
+            {
+                if (Directory.Exists(stagingPath))
+                {
+                    Directory.Delete(stagingPath, true);
+                }
+
+                if (!Directory.Exists(targetPath) && Directory.Exists(rollbackPath))
+                {
+                    Directory.Move(rollbackPath, targetPath);
+                }
+
+                throw;
+            }
 
             return new InstallResult
             {
@@ -289,6 +322,21 @@ public class ModInstallerService
         }
     }
 
+    private static void ValidateManifestPaths(ModManifest manifest, string modRoot)
+    {
+        string validationRoot = Path.Combine(Path.GetTempPath(), "RPGModder_PathValidation");
+        foreach (var operation in manifest.FileOps)
+        {
+            SafePathService.ResolveContainedPath(modRoot, operation.Source, "Manifest source");
+            SafePathService.ResolveContainedPath(validationRoot, operation.Target, "Manifest target");
+        }
+
+        foreach (var patch in manifest.JsonPatches)
+        {
+            SafePathService.ResolveContainedPath(validationRoot, patch.Target, "JSON patch target");
+        }
+    }
+
     private string NormalizeGamePath(string path)
     {
         string normalized = path.Replace('\\', '/');
@@ -308,14 +356,6 @@ public class ModInstallerService
         return path;
     }
 
-    private void CopyDirectory(string sourceDir, string destinationDir)
-    {
-        Directory.CreateDirectory(destinationDir);
-        foreach (var file in Directory.GetFiles(sourceDir))
-            File.Copy(file, Path.Combine(destinationDir, Path.GetFileName(file)), true);
-        foreach (var directory in Directory.GetDirectories(sourceDir))
-            CopyDirectory(directory, Path.Combine(destinationDir, Path.GetFileName(directory)));
-    }
 }
 
 public class InstallResult
