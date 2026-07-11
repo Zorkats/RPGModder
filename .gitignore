@@ -3,3 +3,11 @@ obj/
 /packages/
 riderModule.iml
 /_ReSharper.Caches/
+.idea/
+*.user
+*.suo
+*.userprefs
+artifacts/
+.allyrc
+packaging/
+docs/
