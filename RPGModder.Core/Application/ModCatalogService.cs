@@ -1,7 +1,6 @@
-using Newtonsoft.Json;
 using RPGModder.Core.Models;
 using RPGModder.Core.Operations;
-using RPGModder.Core.Services;
+using RPGModder.Core.Workspace;
 
 namespace RPGModder.Core.Application;
 
@@ -37,7 +36,7 @@ public sealed class ModCatalogService : IModCatalogService
                 continue;
             }
 
-            string manifestPath = Path.Combine(directory, "mod.json");
+            string manifestPath = Path.Combine(directory, ModStore.ManifestFileName);
             if (!File.Exists(manifestPath))
             {
                 diagnostics.Add(new OperationDiagnostic(
@@ -51,6 +50,17 @@ public sealed class ModCatalogService : IModCatalogService
             try
             {
                 ModManifest manifest = LoadManifest(manifestPath);
+                if (!manifest.IsSupported)
+                {
+                    // GR-V2: a manifest from a newer schema is not read further and the mod is not listed.
+                    diagnostics.Add(new OperationDiagnostic(
+                        DiagnosticCodes.ManifestSchemaUnsupported,
+                        $"The mod declares manifest schema version {manifest.EffectiveSchemaVersion}, which is newer than this version supports.",
+                        DiagnosticSeverity.Error,
+                        folderName));
+                    continue;
+                }
+
                 discovered[folderName] = new ModListItem(
                     manifest,
                     folderName,
@@ -106,8 +116,7 @@ public sealed class ModCatalogService : IModCatalogService
             return cached.Manifest;
         }
 
-        var manifest = JsonConvert.DeserializeObject<ModManifest>(File.ReadAllText(fullPath))
-                       ?? throw new InvalidDataException("mod.json is empty or invalid.");
+        ModManifest manifest = ModStore.ReadManifestFile(fullPath);
         _cache[fullPath] = new CachedManifest(info.LastWriteTimeUtc, info.Length, manifest);
         return manifest;
     }

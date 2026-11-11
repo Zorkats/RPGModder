@@ -1,6 +1,7 @@
 using Newtonsoft.Json;
 using RPGModder.Core.Models;
 using RPGModder.Core.Services;
+using RPGModder.Core.Workspace;
 
 namespace RPGModder.Tests;
 

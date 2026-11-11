@@ -1,8 +1,15 @@
-namespace RPGModder.Core.Services;
+using RPGModder.Core.Services;
 
+namespace RPGModder.Core.Workspace;
+
+/// <summary>
+/// Every path under <c>.rpgmodder</c>, and the legacy 1.x paths the migration imports from (LAY-4).
+/// The session builds exactly one instance per open game and passes it down (OWN-1).
+/// </summary>
 public sealed class GameWorkspacePaths
 {
     public const int CurrentSchemaVersion = 3;
+    public const string LegacyProfilePrefix = "mod_profile_";
 
     public string GameRoot { get; }
     public string Root { get; }
@@ -19,6 +26,13 @@ public sealed class GameWorkspacePaths
     public string OperationLock { get; }
     public string Trash { get; }
     public string DeployedState { get; }
+
+    public string LegacyMods { get; }
+    public string LegacyCleanBackup { get; }
+    public string LegacySaveBackups { get; }
+    public string LegacyProfileSaves { get; }
+    public string LegacyDefaultProfile { get; }
+    public string LegacyActiveProfileMarker { get; }
 
     public GameWorkspacePaths(string gameRoot)
     {
@@ -37,6 +51,14 @@ public sealed class GameWorkspacePaths
         OperationLock = Path.Combine(Root, "operation.lock");
         Trash = Path.Combine(Root, "trash");
         DeployedState = Path.Combine(Root, "deployed.json");
+
+        string legacyBackups = Path.Combine(GameRoot, "ModManager_Backups");
+        LegacyMods = Path.Combine(GameRoot, "Mods");
+        LegacyCleanBackup = Path.Combine(legacyBackups, "Clean_Vanilla");
+        LegacySaveBackups = Path.Combine(legacyBackups, "Saves");
+        LegacyProfileSaves = Path.Combine(legacyBackups, "ProfileSaves");
+        LegacyDefaultProfile = Path.Combine(GameRoot, "profile.json");
+        LegacyActiveProfileMarker = Path.Combine(legacyBackups, "active_profile.txt");
     }
 
     public void EnsureCreated()
@@ -57,5 +79,11 @@ public sealed class GameWorkspacePaths
             ? "default.json"
             : $"{safeName}.json";
         return SafePathService.ResolveContainedPath(Profiles, fileName, "Profile path");
+    }
+
+    /// <summary>The 1.x named profiles, <c>mod_profile_&lt;name&gt;.json</c> next to the game.</summary>
+    public IReadOnlyList<string> LegacyNamedProfiles()
+    {
+        return Directory.GetFiles(GameRoot, LegacyProfilePrefix + "*.json");
     }
 }

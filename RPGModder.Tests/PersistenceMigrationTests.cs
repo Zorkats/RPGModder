@@ -1,6 +1,7 @@
 using Newtonsoft.Json;
 using RPGModder.Core.Models;
 using RPGModder.Core.Services;
+using RPGModder.Core.Workspace;
 
 namespace RPGModder.Tests;
 
@@ -114,7 +115,7 @@ public sealed class PersistenceMigrationTests : IDisposable
     {
         string game = Path.Combine(_root, "game");
         var paths = new GameWorkspacePaths(game);
-        var repository = new RPGModder.Core.Application.ProfileRepository();
+        var repository = new ProfileStore();
 
         repository.Save(paths, "Default", new ModProfile { EnabledMods = new List<string> { "example" } });
 

@@ -189,7 +189,7 @@ public class ModPackerService
         }
 
         string manifestJson = JsonConvert.SerializeObject(manifest, Formatting.Indented);
-        File.WriteAllText(Path.Combine(outputFolder, "mod.json"), manifestJson);
+        FileTreeService.WriteAllTextAtomic(Path.Combine(outputFolder, "mod.json"), manifestJson);
     }
 
     #region Helper Methods

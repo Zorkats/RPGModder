@@ -5,11 +5,12 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
-using Newtonsoft.Json;
 using RPGModder.Core.Application;
 using RPGModder.Core.Models;
 using RPGModder.Core.Operations;
+using RPGModder.Core.Platform;
 using RPGModder.Core.Services;
+using RPGModder.Core.Workspace;
 using RPGModder.UI.Dialogs;
 using System;
 using System.Collections.Generic;
@@ -546,17 +547,22 @@ public partial class MainWindow
         {
             mod.Manifest.Metadata.NexusId = dialog.SelectedMod.ModId;
 
-            // Save to mod.json
-        string modsDir = SafePathService.ResolveContainedPath(RequireWorkspace().Mods, mod.FolderName, "Mod folder");
-            string jsonPath = Path.Combine(modsDir, "mod.json");
-
-            if (File.Exists(jsonPath))
+            // Save to mod.json through the library store (OWN-4), atomically (TX-18).
+            var mods = new ModStore(RequireWorkspace().Mods, _gameSession?.Files ?? new FileSystemOps());
+            try
             {
-                File.WriteAllText(jsonPath, JsonConvert.SerializeObject(mod.Manifest, Formatting.Indented));
-                SetStatus($"Linked '{mod.Name}' to '{dialog.SelectedMod.Name}' (ID {dialog.SelectedMod.ModId})", true);
+                if (File.Exists(mods.ManifestPathOf(mod.FolderName)))
+                {
+                    mods.WriteManifest(mod.FolderName, mod.Manifest);
+                    SetStatus($"Linked '{mod.Name}' to '{dialog.SelectedMod.Name}' (ID {dialog.SelectedMod.ModId})", true);
 
-                // Trigger an immediate update check for this mod
-                _ = RunBackgroundUpdateCheckAsync();
+                    // Trigger an immediate update check for this mod
+                    _ = RunBackgroundUpdateCheckAsync();
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                SetStatus($"The Nexus link could not be saved: {ex.Message}", false);
             }
         }
     }

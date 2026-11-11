@@ -4,6 +4,7 @@ using Newtonsoft.Json.Linq;
 using RPGModder.Core.Models;
 using RPGModder.Core.Services;
 using RPGModder.Tests.Support;
+using RPGModder.Core.Workspace;
 
 namespace RPGModder.Tests.Characterization;
 

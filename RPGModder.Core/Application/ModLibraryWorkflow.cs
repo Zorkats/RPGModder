@@ -1,7 +1,7 @@
-using System.Globalization;
 using RPGModder.Core.Models;
 using RPGModder.Core.Operations;
 using RPGModder.Core.Services;
+using RPGModder.Core.Workspace;
 
 namespace RPGModder.Core.Application;
 
@@ -14,15 +14,17 @@ public sealed class ModLibraryWorkflow
     private const string RemoveOperation = "Remove mod";
 
     private readonly ModInstallerService _installer;
-    private readonly IProfileRepository _profiles;
+    private readonly IProfileStore? _profiles;
     private readonly TimeProvider _clock;
 
+    /// <summary>Uses a profile store on the session's file operations.</summary>
     public ModLibraryWorkflow()
-        : this(new ModInstallerService(), new ProfileRepository(), TimeProvider.System)
     {
+        _installer = new ModInstallerService();
+        _clock = TimeProvider.System;
     }
 
-    public ModLibraryWorkflow(ModInstallerService installer, IProfileRepository profiles, TimeProvider clock)
+    public ModLibraryWorkflow(ModInstallerService installer, IProfileStore profiles, TimeProvider clock)
     {
         _installer = installer;
         _profiles = profiles;
@@ -34,7 +36,7 @@ public sealed class ModLibraryWorkflow
         string sourcePath,
         CancellationToken cancellationToken = default)
     {
-        return RunInstallAsync(session, modsDirectory => _installer.InstallMod(sourcePath, modsDirectory), cancellationToken);
+        return RunInstallAsync(session, store => _installer.InstallMod(sourcePath, store), cancellationToken);
     }
 
     public Task<InstallOutcome> InstallFromNexusAsync(
@@ -47,7 +49,7 @@ public sealed class ModLibraryWorkflow
     {
         return RunInstallAsync(
             session,
-            modsDirectory => _installer.InstallModWithNexusInfo(archivePath, modsDirectory, nexusId, version, existingFolderName),
+            store => _installer.InstallModWithNexusInfo(archivePath, store, nexusId, version, existingFolderName),
             cancellationToken);
     }
 
@@ -69,13 +71,13 @@ public sealed class ModLibraryWorkflow
 
         using (lease)
         {
-            return await Task.Run(() => Remove(session.Workspace, modFolderName), CancellationToken.None);
+            return await Task.Run(() => Remove(session, modFolderName), CancellationToken.None);
         }
     }
 
     private async Task<InstallOutcome> RunInstallAsync(
         GameSession session,
-        Func<string, InstallResult> install,
+        Func<ModStore, InstallResult> install,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -86,15 +88,14 @@ public sealed class ModLibraryWorkflow
 
         using (lease)
         {
-            return await Task.Run(() => Install(session.Workspace, install), CancellationToken.None);
+            return await Task.Run(() => Install(session, install), CancellationToken.None);
         }
     }
 
-    private static InstallOutcome Install(GameWorkspacePaths workspace, Func<string, InstallResult> install)
+    private static InstallOutcome Install(GameSession session, Func<ModStore, InstallResult> install)
     {
         var result = new OperationResult();
-        Directory.CreateDirectory(workspace.Mods);
-        InstallResult installed = install(workspace.Mods);
+        InstallResult installed = install(ModsOf(session));
         if (!installed.Success || installed.FolderName == null)
         {
             result.AddError(DiagnosticCodes.InstallFailed, installed.Error ?? "The mod could not be installed.");
@@ -104,16 +105,15 @@ public sealed class ModLibraryWorkflow
         return new InstallOutcome(result, installed.FolderName, installed.Manifest);
     }
 
-    private OperationResult Remove(GameWorkspacePaths workspace, string modFolderName)
+    private OperationResult Remove(GameSession session, string modFolderName)
     {
         var result = new OperationResult();
-        string modPath;
+        ModStore mods = ModsOf(session);
         string trashEntry;
         try
         {
             string folderName = SafePathService.ValidateDirectoryName(modFolderName, "Mod folder");
-            modPath = SafePathService.ResolveContainedPath(workspace.Mods, folderName, "Mod folder");
-            trashEntry = MoveToTrash(workspace, folderName, modPath);
+            trashEntry = mods.MoveToTrash(folderName, session.Workspace.Trash, _clock.GetUtcNow());
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
@@ -123,7 +123,7 @@ public sealed class ModLibraryWorkflow
 
         try
         {
-            RemoveFromProfiles(workspace, modFolderName);
+            RemoveFromProfiles(session, modFolderName, result);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or Newtonsoft.Json.JsonException)
         {
@@ -134,53 +134,53 @@ public sealed class ModLibraryWorkflow
             return result;
         }
 
-        PurgeTrashEntry(trashEntry, result);
+        PurgeTrashEntry(mods, trashEntry, result);
         return result;
     }
 
-    private string MoveToTrash(GameWorkspacePaths workspace, string folderName, string modPath)
+    private void RemoveFromProfiles(GameSession session, string modFolderName, OperationResult result)
     {
-        if (!Directory.Exists(modPath))
-        {
-            throw new DirectoryNotFoundException($"The mod folder does not exist: {folderName}");
-        }
-
-        Directory.CreateDirectory(workspace.Trash);
-        string stamp = _clock.GetUtcNow().ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
-        string trashEntry = Path.Combine(workspace.Trash, $"{folderName}-{stamp}");
-        for (int suffix = 1; Directory.Exists(trashEntry) || File.Exists(trashEntry); suffix++)
-        {
-            trashEntry = Path.Combine(workspace.Trash, $"{folderName}-{stamp}-{suffix}");
-        }
-
-        Directory.Move(modPath, trashEntry);
-        return trashEntry;
-    }
-
-    private void RemoveFromProfiles(GameWorkspacePaths workspace, string modFolderName)
-    {
-        foreach (string profileName in _profiles.List(workspace))
+        GameWorkspacePaths workspace = session.Workspace;
+        IProfileStore profiles = _profiles ?? new ProfileStore(session.Files);
+        foreach (string profileName in profiles.List(workspace))
         {
             if (!File.Exists(workspace.GetProfilePath(profileName)))
             {
                 continue;
             }
 
-            ModProfile profile = _profiles.Load(workspace, profileName);
+            ModProfile profile = profiles.Load(workspace, profileName);
             int removed = profile.EnabledMods.RemoveAll(name => name.Equals(modFolderName, StringComparison.OrdinalIgnoreCase))
                           + profile.LoadOrder.RemoveAll(name => name.Equals(modFolderName, StringComparison.OrdinalIgnoreCase));
-            if (removed > 0)
+            if (removed == 0)
             {
-                _profiles.Save(workspace, profileName, profile);
+                continue;
             }
+
+            if (!profiles.CanWrite(workspace, profileName, profile))
+            {
+                // GR-V2: a profile from a newer build keeps its list; it names a mod that is gone.
+                result.AddWarning(
+                    DiagnosticCodes.ProfileSchemaUnsupported,
+                    "The profile was written by a newer version of RPGModder and still lists the removed mod.",
+                    profileName);
+                continue;
+            }
+
+            profiles.Save(workspace, profileName, profile);
         }
     }
 
-    private static void PurgeTrashEntry(string trashEntry, OperationResult result)
+    private static ModStore ModsOf(GameSession session)
+    {
+        return new ModStore(session.Workspace.Mods, session.Files);
+    }
+
+    private static void PurgeTrashEntry(ModStore mods, string trashEntry, OperationResult result)
     {
         try
         {
-            Directory.Delete(trashEntry, true);
+            mods.PurgeTrashEntry(trashEntry);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

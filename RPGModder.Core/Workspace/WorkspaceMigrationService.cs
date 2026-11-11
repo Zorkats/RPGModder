@@ -1,9 +1,26 @@
 using Newtonsoft.Json;
+using RPGModder.Core.Platform;
 
-namespace RPGModder.Core.Services;
+namespace RPGModder.Core.Workspace;
 
+/// <summary>
+/// Imports the layout of RPGModder 1.x (folders next to the game) into <c>.rpgmodder</c> once, and
+/// records the workspace schema version. Files already in the workspace are never overwritten.
+/// </summary>
 public sealed class WorkspaceMigrationService
 {
+    private readonly IFileSystemOps _files;
+
+    public WorkspaceMigrationService()
+        : this(new FileSystemOps())
+    {
+    }
+
+    public WorkspaceMigrationService(IFileSystemOps files)
+    {
+        _files = files;
+    }
+
     public WorkspaceMigrationResult ImportLegacyLayout(GameWorkspacePaths paths)
     {
         paths.EnsureCreated();
@@ -14,29 +31,20 @@ public sealed class WorkspaceMigrationService
             return result;
         }
 
-        string legacyMods = Path.Combine(paths.GameRoot, "Mods");
-        result.ImportedMods = CountMissingTopLevelDirectories(legacyMods, paths.Mods);
-        result.ImportedFiles += ImportDirectoryMissing(legacyMods, paths.Mods);
-        result.ImportedFiles += ImportDirectoryMissing(
-            Path.Combine(paths.GameRoot, "ModManager_Backups", "Clean_Vanilla"),
-            paths.CleanBackup);
-        result.ImportedFiles += ImportDirectoryMissing(
-            Path.Combine(paths.GameRoot, "ModManager_Backups", "Saves"),
-            paths.SaveBackups);
-        result.ImportedFiles += ImportDirectoryMissing(
-            Path.Combine(paths.GameRoot, "ModManager_Backups", "ProfileSaves"),
-            paths.ProfileSaves);
+        result.ImportedMods = CountMissingTopLevelDirectories(paths.LegacyMods, paths.Mods);
+        result.ImportedFiles += ImportDirectoryMissing(paths.LegacyMods, paths.Mods);
+        result.ImportedFiles += ImportDirectoryMissing(paths.LegacyCleanBackup, paths.CleanBackup);
+        result.ImportedFiles += ImportDirectoryMissing(paths.LegacySaveBackups, paths.SaveBackups);
+        result.ImportedFiles += ImportDirectoryMissing(paths.LegacyProfileSaves, paths.ProfileSaves);
 
-        if (ImportFileMissing(
-                Path.Combine(paths.GameRoot, "profile.json"),
-                paths.GetProfilePath("Default")))
+        if (ImportFileMissing(paths.LegacyDefaultProfile, paths.GetProfilePath("Default")))
         {
             result.ImportedProfiles++;
         }
 
-        foreach (string legacyProfile in Directory.GetFiles(paths.GameRoot, "mod_profile_*.json"))
+        foreach (string legacyProfile in paths.LegacyNamedProfiles())
         {
-            string name = Path.GetFileNameWithoutExtension(legacyProfile)["mod_profile_".Length..];
+            string name = Path.GetFileNameWithoutExtension(legacyProfile)[GameWorkspacePaths.LegacyProfilePrefix.Length..];
             try
             {
                 if (ImportFileMissing(legacyProfile, paths.GetProfilePath(name)))
@@ -50,23 +58,19 @@ public sealed class WorkspaceMigrationService
             }
         }
 
-        ImportFileMissing(
-            Path.Combine(paths.GameRoot, "ModManager_Backups", "active_profile.txt"),
-            paths.ActiveProfileMarker);
+        ImportFileMissing(paths.LegacyActiveProfileMarker, paths.ActiveProfileMarker);
 
         var marker = new WorkspaceSchemaMarker
         {
             SchemaVersion = GameWorkspacePaths.CurrentSchemaVersion,
             MigratedUtc = DateTime.UtcNow
         };
-        FileTreeService.WriteAllTextAtomic(
-            paths.SchemaMarker,
-            JsonConvert.SerializeObject(marker, Formatting.Indented));
+        _files.WriteAllTextAtomic(paths.SchemaMarker, JsonConvert.SerializeObject(marker, Formatting.Indented));
         result.SchemaUpgraded = true;
         return result;
     }
 
-    private static int ImportDirectoryMissing(string source, string destination)
+    private int ImportDirectoryMissing(string source, string destination)
     {
         if (!Directory.Exists(source))
         {
@@ -86,7 +90,7 @@ public sealed class WorkspaceMigrationService
             string target = Path.Combine(destination, fileInfo.Name);
             if (!File.Exists(target))
             {
-                File.Copy(file, target);
+                _files.CopyFile(file, target);
                 importedFiles++;
             }
         }
@@ -99,23 +103,20 @@ public sealed class WorkspaceMigrationService
                 continue;
             }
 
-            importedFiles += ImportDirectoryMissing(
-                directory,
-                Path.Combine(destination, directoryInfo.Name));
+            importedFiles += ImportDirectoryMissing(directory, Path.Combine(destination, directoryInfo.Name));
         }
 
         return importedFiles;
     }
 
-    private static bool ImportFileMissing(string source, string destination)
+    private bool ImportFileMissing(string source, string destination)
     {
         if (!File.Exists(source) || File.Exists(destination))
         {
             return false;
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-        File.Copy(source, destination);
+        _files.CopyFile(source, destination);
         return true;
     }
 
@@ -128,12 +129,13 @@ public sealed class WorkspaceMigrationService
 
         try
         {
-            WorkspaceSchemaMarker? marker = JsonConvert.DeserializeObject<WorkspaceSchemaMarker>(
-                File.ReadAllText(markerPath));
+            WorkspaceSchemaMarker? marker = JsonConvert.DeserializeObject<WorkspaceSchemaMarker>(File.ReadAllText(markerPath));
             return marker?.SchemaVersion ?? 0;
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
+            // An unreadable marker records no version, so the import runs again. It never overwrites.
+            System.Diagnostics.Trace.TraceWarning($"workspace.json is not valid JSON and the legacy import runs again: {ex.Message}");
             return 0;
         }
     }
@@ -157,13 +159,4 @@ public sealed class WorkspaceMigrationService
         [JsonProperty("migratedUtc")]
         public DateTime MigratedUtc { get; set; }
     }
-}
-
-public sealed class WorkspaceMigrationResult
-{
-    public int ImportedFiles { get; set; }
-    public int ImportedMods { get; set; }
-    public int ImportedProfiles { get; set; }
-    public bool SchemaUpgraded { get; set; }
-    public List<string> Warnings { get; } = new();
 }

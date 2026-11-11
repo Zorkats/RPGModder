@@ -5,6 +5,7 @@ using RPGModder.Core.Models;
 using RPGModder.Core.Operations;
 using RPGModder.Core.Platform;
 using RPGModder.Core.Services;
+using RPGModder.Core.Workspace;
 
 namespace RPGModder.Tests;
 
@@ -135,7 +136,7 @@ public sealed class SafetyGuardTests : IDisposable
         GameSession session = await OpenSessionAsync();
         WriteCopyMod(session.Workspace, "mod-a", "img/pictures/New.png", "a");
         WriteCopyMod(session.Workspace, "mod-b", "img/pictures/Other.png", "b");
-        var profiles = new ProfileRepository();
+        var profiles = new ProfileStore();
         profiles.Save(session.Workspace, "Default", Profile("mod-a", "mod-b"));
         profiles.Save(session.Workspace, "Second", Profile("mod-a"));
 
@@ -155,7 +156,7 @@ public sealed class SafetyGuardTests : IDisposable
     {
         GameSession session = await OpenSessionAsync();
         WriteCopyMod(session.Workspace, "mod-a", "img/pictures/New.png", "a");
-        new ProfileRepository().Save(session.Workspace, "Default", Profile("mod-a"));
+        new ProfileStore().Save(session.Workspace, "Default", Profile("mod-a"));
         var workflow = new ModLibraryWorkflow(new ModInstallerService(), new UnwritableProfiles(), TimeProvider.System);
 
         OperationResult result = await workflow.RemoveAsync(session, "mod-a");
@@ -278,9 +279,9 @@ public sealed class SafetyGuardTests : IDisposable
     }
 
     // Reads like the real repository and fails every write, as a full disk or a locked file would.
-    private sealed class UnwritableProfiles : IProfileRepository
+    private sealed class UnwritableProfiles : IProfileStore
     {
-        private readonly ProfileRepository _inner = new();
+        private readonly ProfileStore _inner = new();
 
         public IReadOnlyList<string> List(GameWorkspacePaths workspace)
         {
@@ -290,6 +291,11 @@ public sealed class SafetyGuardTests : IDisposable
         public ModProfile Load(GameWorkspacePaths workspace, string profileName)
         {
             return _inner.Load(workspace, profileName);
+        }
+
+        public bool CanWrite(GameWorkspacePaths workspace, string profileName, ModProfile profile)
+        {
+            return _inner.CanWrite(workspace, profileName, profile);
         }
 
         public void Save(GameWorkspacePaths workspace, string profileName, ModProfile profile)

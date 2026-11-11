@@ -2,6 +2,8 @@
 using Newtonsoft.Json.Linq;
 using RPGModder.Core.Models;
 using RPGModder.Core.Operations;
+using RPGModder.Core.Platform;
+using RPGModder.Core.Workspace;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -20,6 +22,8 @@ public class ModEngine
     private readonly bool _usesWwwFolder;
     private readonly JsonMergeService _merger = new();
     private readonly GameWorkspacePaths _workspace;
+    private readonly VanillaStore _vanilla;
+    private readonly SaveStore _saves;
 
     // --- Configuration ---
     public bool UseMerging { get; set; } = true;
@@ -35,19 +39,29 @@ public class ModEngine
     public string ContentPath => _contentPath;
     public bool UsesWwwFolder => _usesWwwFolder;
 
+    /// <summary>
+    /// Opens a game without a session, for tests of the legacy engine. The session passes its own
+    /// workspace paths and layout instead (OWN-1); A7 deletes this class.
+    /// </summary>
     public ModEngine(string gameExecutablePath)
+        : this(
+            gameExecutablePath,
+            new GameWorkspacePaths(Path.GetDirectoryName(gameExecutablePath) ?? string.Empty),
+            GameLayout.Detect(Path.GetDirectoryName(gameExecutablePath) ?? string.Empty),
+            new FileSystemOps())
+    {
+    }
+
+    public ModEngine(string gameExecutablePath, GameWorkspacePaths workspace, GameLayout layout, IFileSystemOps files)
     {
         _gamePath = Path.GetDirectoryName(gameExecutablePath) ?? string.Empty;
-
-        string wwwPath = Path.Combine(_gamePath, "www");
-        _usesWwwFolder = Directory.Exists(wwwPath) &&
-                         (Directory.Exists(Path.Combine(wwwPath, "js")) ||
-                          Directory.Exists(Path.Combine(wwwPath, "data")));
-
-        _contentPath = _usesWwwFolder ? wwwPath : _gamePath;
-        _workspace = new GameWorkspacePaths(_gamePath);
-        MigrationResult = new WorkspaceMigrationService().ImportLegacyLayout(_workspace);
-        _backupPath = _workspace.CleanBackup;
+        _usesWwwFolder = layout.UsesWww;
+        _contentPath = layout.ContentRoot;
+        _workspace = workspace;
+        _vanilla = new VanillaStore(workspace, layout, files);
+        _saves = new SaveStore(workspace, layout, files);
+        MigrationResult = new WorkspaceMigrationService(files).ImportLegacyLayout(_workspace);
+        _backupPath = _vanilla.Root;
         _modsRootPath = _workspace.Mods;
 
         if (!Directory.Exists(_backupPath)) Directory.CreateDirectory(_backupPath);
@@ -63,131 +77,14 @@ public class ModEngine
     // PHASE 1: SAFETY SYSTEMS (Time Capsule & Vanilla Backup)
     // ==================================================================================
 
-    public const string BackupMarkerFileName = "backup_complete.marker";
+    public const string BackupMarkerFileName = VanillaStore.MarkerFileName;
 
-    public string BackupMarkerPath => Path.Combine(_backupPath, BackupMarkerFileName);
+    public string BackupMarkerPath => _vanilla.MarkerPath;
 
     public void InitializeSafeState()
     {
-        string markerFile = BackupMarkerPath;
-
-        if (!File.Exists(markerFile))
-        {
-            // Without its marker a backup folder is a partial one, left by an interrupted backup or an
-            // interrupted reset. It is never trusted or topped up: it is removed and taken again.
-            DiscardUnmarkedBackup();
-
-            // --- NEW: DIRTY INSTALLATION TRIPWIRE ---
-            if (IsDirtyInstallation())
-            {
-                throw new InvalidOperationException(
-                    "Dirty installation detected! It looks like Fear & Hunger Mod Manager (FHMM) or another runtime loader " +
-                    "is already installed directly into your base game.\n\n" +
-                    "To use RPGModder safely, you must have a 100% clean, unmodified game. " +
-                    "Please verify your game files on Steam/Itch.io to restore the vanilla state, then install FHMM as a standard ZIP mod inside RPGModder."
-                );
-            }
-
-            foreach (var folder in FilePolicyService.ProtectedFolders)
-            {
-                string sourcePath = Path.Combine(_contentPath, folder);
-                if (Directory.Exists(sourcePath))
-                {
-                    CopyDirectory(sourcePath, Path.Combine(_backupPath, folder));
-                }
-            }
-
-            // Backup standalone root files
-            foreach (var file in FilePolicyService.ProtectedRootFiles)
-            {
-                string sourceFile = Path.Combine(_contentPath, file);
-                if (File.Exists(sourceFile))
-                {
-                    File.Copy(sourceFile, Path.Combine(_backupPath, file), true);
-                }
-            }
-
-            File.WriteAllText(markerFile, JsonConvert.SerializeObject(new
-            {
-                BackupDate = DateTime.Now,
-                UsesWwwFolder = _usesWwwFolder,
-                ContentPath = _contentPath
-            }, Formatting.Indented));
-        }
-
-        InitializeSafeSaves();
-    }
-
-    private void DiscardUnmarkedBackup()
-    {
-        if (Directory.Exists(_backupPath) && Directory.EnumerateFileSystemEntries(_backupPath).Any())
-        {
-            Directory.Delete(_backupPath, true);
-        }
-
-        Directory.CreateDirectory(_backupPath);
-    }
-
-    private bool IsDirtyInstallation()
-    {
-        // We no longer check for the mere existence of the "mods" folder because
-        // Steam's "Verify Integrity" leaves orphaned folders behind.
-        // A game is only truly "dirty" if the boot sequence is actively hijacked.
-
-        string indexHtml = Path.Combine(_contentPath, "index.html");
-        if (File.Exists(indexHtml))
-        {
-            string content = File.ReadAllText(indexHtml);
-
-            // Matches Mattie's HTML comments, script tags, and TY Mod Loader
-            if (content.Contains("mattieFMModLoader.js", StringComparison.OrdinalIgnoreCase) ||
-                content.Contains("MATTIE", StringComparison.OrdinalIgnoreCase) ||
-                content.Contains("TY_ModLoader", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-
-    private void InitializeSafeSaves()
-    {
-        JustCreatedSaveBackup = false;
-
-        string liveSavePath = Path.Combine(_contentPath, "save");
-        if (!Directory.Exists(liveSavePath) && Directory.Exists(Path.Combine(_gamePath, "save")))
-        {
-            liveSavePath = Path.Combine(_gamePath, "save");
-        }
-
-        string timeCapsulePath = Path.Combine(_workspace.SaveBackups, "original-vanilla");
-
-        if (!Directory.Exists(timeCapsulePath) && Directory.Exists(liveSavePath))
-        {
-            Directory.CreateDirectory(timeCapsulePath);
-
-            var saves = Directory.GetFiles(liveSavePath, "*", SearchOption.TopDirectoryOnly)
-                .Where(s => s.EndsWith(".rpgsave") || s.EndsWith(".rmmzsave"));
-
-            bool anyBackedUp = false;
-            foreach (var save in saves)
-            {
-                File.Copy(save, Path.Combine(timeCapsulePath, Path.GetFileName(save)));
-                anyBackedUp = true;
-            }
-
-            if (anyBackedUp)
-            {
-                File.WriteAllText(Path.Combine(timeCapsulePath, "readme.txt"),
-                    "These save files were backed up by RPGModder.\n" +
-                    "They represent the state of your saves before you started using Profiles.\n" +
-                    "Restore these if your saves ever disappear or get corrupted.");
-
-                JustCreatedSaveBackup = true;
-            }
-        }
+        _vanilla.EnsureBackup();
+        JustCreatedSaveBackup = _saves.EnsureTimeCapsule();
     }
 
     // ==================================================================================
@@ -196,132 +93,7 @@ public class ModEngine
 
     public void SwapSaveFiles(string oldProfileName, string newProfileName)
     {
-        string liveSavePath = Path.Combine(_contentPath, "save");
-        if (!Directory.Exists(liveSavePath) && Directory.Exists(Path.Combine(_gamePath, "save")))
-        {
-            liveSavePath = Path.Combine(_gamePath, "save");
-        }
-
-        string storageRoot = _workspace.ProfileSaves;
-        string oldStorage = SafePathService.ResolveContainedPath(
-            storageRoot,
-            SafePathService.ValidateDirectoryName(oldProfileName, "Old profile name"),
-            "Old profile saves");
-        string newStorage = SafePathService.ResolveContainedPath(
-            storageRoot,
-            SafePathService.ValidateDirectoryName(newProfileName, "New profile name"),
-            "New profile saves");
-
-        if (!Directory.Exists(liveSavePath)) Directory.CreateDirectory(liveSavePath);
-        if (!Directory.Exists(oldStorage)) Directory.CreateDirectory(oldStorage);
-        if (!Directory.Exists(newStorage)) Directory.CreateDirectory(newStorage);
-
-        var extensions = new[] { ".rpgsave", ".rmmzsave", "config.rpgsave", "global.rpgsave" };
-        var liveFiles = Directory.GetFiles(liveSavePath)
-            .Where(f => extensions.Any(ext => f.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-
-        string stagingDir = Path.Combine(storageRoot, $"_swap_staging_{Guid.NewGuid():N}");
-        string rollbackDir = Path.Combine(storageRoot, $"_swap_rollback_{Guid.NewGuid():N}");
-        Directory.CreateDirectory(stagingDir);
-        Directory.CreateDirectory(rollbackDir);
-
-        bool keepRollback = false;
-        try
-        {
-            // Phase 1 copies only. The live save folder is not touched, so a failure here
-            // leaves every save exactly where it was.
-            foreach (var file in liveFiles)
-            {
-                File.Copy(file, Path.Combine(rollbackDir, Path.GetFileName(file)), true);
-            }
-
-            foreach (var file in liveFiles)
-            {
-                File.Copy(file, Path.Combine(oldStorage, Path.GetFileName(file)), true);
-            }
-
-            foreach (var file in Directory.GetFiles(newStorage))
-            {
-                File.Copy(file, Path.Combine(stagingDir, Path.GetFileName(file)), true);
-            }
-
-            // Phase 2 replaces the live saves. rollbackDir now holds the complete previous set.
-            try
-            {
-                foreach (var file in liveFiles)
-                {
-                    File.Delete(file);
-                }
-
-                foreach (var file in Directory.GetFiles(stagingDir))
-                {
-                    File.Move(file, Path.Combine(liveSavePath, Path.GetFileName(file)), true);
-                }
-            }
-            catch (Exception swapError)
-            {
-                if (!TryRestoreSaves(liveSavePath, rollbackDir, extensions))
-                {
-                    keepRollback = true;
-                    throw new IOException(
-                        $"Switching saves failed and the previous saves could not be put back. They are kept in '{rollbackDir}'.",
-                        swapError);
-                }
-
-                throw;
-            }
-        }
-        finally
-        {
-            TryDeleteSwapFolder(stagingDir);
-            if (!keepRollback)
-            {
-                TryDeleteSwapFolder(rollbackDir);
-            }
-        }
-    }
-
-    private static void TryDeleteSwapFolder(string folder)
-    {
-        try
-        {
-            if (Directory.Exists(folder))
-            {
-                Directory.Delete(folder, true);
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // The swap already finished or was rolled back; a leftover work folder under
-            // profile-saves holds copies only and does not change which saves are live.
-            Trace.TraceWarning($"A save swap work folder could not be removed and is left in place: {folder}: {ex.Message}");
-        }
-    }
-
-    private static bool TryRestoreSaves(string liveSavePath, string rollbackDir, string[] extensions)
-    {
-        try
-        {
-            foreach (string file in Directory.GetFiles(liveSavePath))
-            {
-                if (extensions.Any(ext => file.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
-                {
-                    File.Delete(file);
-                }
-            }
-
-            foreach (string file in Directory.GetFiles(rollbackDir))
-            {
-                File.Copy(file, Path.Combine(liveSavePath, Path.GetFileName(file)), true);
-            }
-
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return false;
-        }
+        _saves.Swap(oldProfileName, newProfileName);
     }
 
     // ==================================================================================
@@ -435,13 +207,14 @@ public class ModEngine
             {
                 try
                 {
-                    string json = File.ReadAllText(manifestPath);
-                    var manifest = JsonConvert.DeserializeObject<ModManifest>(json);
-
-                    if (manifest != null)
+                    ModManifest manifest = ModStore.ReadManifestFile(manifestPath);
+                    if (!manifest.IsSupported)
                     {
-                        ApplyMod(modPath, manifest);
+                        AddUnsupportedManifest(result, manifest, modFolderName);
+                        continue;
                     }
+
+                    ApplyMod(modPath, manifest);
                 }
                 catch (Exception ex)
                 {
@@ -477,8 +250,12 @@ public class ModEngine
 
             try
             {
-                var manifest = JsonConvert.DeserializeObject<ModManifest>(File.ReadAllText(manifestPath));
-                if (manifest == null) continue;
+                ModManifest manifest = ModStore.ReadManifestFile(manifestPath);
+                if (!manifest.IsSupported)
+                {
+                    AddUnsupportedManifest(result, manifest, modFolderName);
+                    continue;
+                }
 
                 foreach (var op in manifest.FileOps)
                 {
@@ -822,11 +599,6 @@ public class ModEngine
         File.Copy(source, dest, true);
     }
 
-    private void CopyDirectory(string sourceDir, string destinationDir)
-    {
-        FileTreeService.CopyDirectory(sourceDir, destinationDir);
-    }
-
     private bool FilesAreEqual(string path1, string path2)
     {
         var info1 = new FileInfo(path1);
@@ -993,19 +765,29 @@ public class ModEngine
 
         try
         {
-            return JsonConvert.DeserializeObject<ModManifest>(File.ReadAllText(manifestPath));
+            ModManifest manifest = ModStore.ReadManifestFile(manifestPath);
+            // The deploy reports a manifest newer than this build itself, with manifest.schema_unsupported.
+            return manifest.IsSupported ? manifest : null;
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or InvalidDataException)
         {
             // The deploy reports the unreadable manifest itself, with manifest.invalid.
+            Trace.TraceWarning($"The collision guard skips an unreadable manifest: {modFolderName}: {ex.Message}");
             return null;
         }
     }
 
+    private static void AddUnsupportedManifest(OperationResult result, ModManifest manifest, string modFolderName)
+    {
+        result.AddError(
+            DiagnosticCodes.ManifestSchemaUnsupported,
+            $"The mod declares manifest schema version {manifest.EffectiveSchemaVersion}, which is newer than this version supports.",
+            modFolderName);
+    }
+
     private bool HasVanillaCounterpart(string targetPath)
     {
-        string backupFile = SafePathService.ResolveContainedPath(_backupPath, targetPath, "Backup target");
-        return File.Exists(backupFile);
+        return _vanilla.Contains(targetPath);
     }
 
     private static string HashFile(string path)

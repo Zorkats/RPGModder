@@ -1,15 +1,26 @@
-using Newtonsoft.Json;
-using RPGModder.Core.Models;
-using System;
-using System.IO;
+using System.Diagnostics;
 using System.IO.Compression;
-using System.Linq;
+using RPGModder.Core.Models;
+using RPGModder.Core.Platform;
+using RPGModder.Core.Workspace;
 
 namespace RPGModder.Core.Services;
 
-// Handles mod installation from folders and ZIP files
+// Handles mod installation from folders and ZIP files. Every write into the library goes through
+// ModStore (OWN-4).
 public class ModInstallerService
 {
+    private readonly IFileSystemOps _files;
+
+    public ModInstallerService()
+        : this(new FileSystemOps())
+    {
+    }
+
+    public ModInstallerService(IFileSystemOps files)
+    {
+        _files = files;
+    }
 
     public InstallResult InstallModWithNexusInfo(
         string sourcePath,
@@ -18,8 +29,18 @@ public class ModInstallerService
         string version,
         string? existingFolderName = null)
     {
+        return InstallModWithNexusInfo(sourcePath, new ModStore(modsDirectory, _files), nexusId, version, existingFolderName);
+    }
+
+    public InstallResult InstallModWithNexusInfo(
+        string sourcePath,
+        ModStore store,
+        int nexusId,
+        string version,
+        string? existingFolderName = null)
+    {
         // 1. Install normally first to unpack everything
-        var result = InstallMod(sourcePath, modsDirectory, existingFolderName);
+        var result = InstallMod(sourcePath, store, existingFolderName);
 
         if (result.Success && result.Manifest != null && !string.IsNullOrEmpty(result.FolderName))
         {
@@ -32,9 +53,7 @@ public class ModInstallerService
             }
 
             // 3. Save the updated mod.json back to disk
-            string installedPath = Path.Combine(modsDirectory, result.FolderName, "mod.json");
-            File.WriteAllText(installedPath,
-                JsonConvert.SerializeObject(result.Manifest, Formatting.Indented));
+            store.WriteManifest(result.FolderName, result.Manifest);
         }
 
         return result;
@@ -44,12 +63,17 @@ public class ModInstallerService
     // Returns the installed mod's folder name, or null if installation failed
     public InstallResult InstallMod(string sourcePath, string modsDirectory, string? targetFolderName = null)
     {
+        return InstallMod(sourcePath, new ModStore(modsDirectory, _files), targetFolderName);
+    }
+
+    public InstallResult InstallMod(string sourcePath, ModStore store, string? targetFolderName = null)
+    {
         if (File.Exists(sourcePath))
         {
             // Check by extension first, then by magic bytes (handles missing/wrong extensions)
             if (IsZipFile(sourcePath))
             {
-                return InstallFromZip(sourcePath, modsDirectory, targetFolderName);
+                return InstallFromZip(sourcePath, store, targetFolderName);
             }
 
             return new InstallResult
@@ -60,7 +84,7 @@ public class ModInstallerService
         }
         else if (Directory.Exists(sourcePath))
         {
-            return InstallFromFolder(sourcePath, modsDirectory, targetFolderName);
+            return InstallFromFolder(sourcePath, store, targetFolderName);
         }
 
         return new InstallResult { Success = false, Error = "File or folder not found." };
@@ -83,13 +107,17 @@ public class ModInstallerService
                        header[2] == 0x03 && header[3] == 0x04;
             }
         }
-        catch { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A file that cannot be read is reported as an unsupported format by the caller.
+            Trace.TraceWarning($"The file could not be read to check for a ZIP header: {filePath}: {ex.Message}");
+        }
 
         return false;
     }
 
     // Installs from a ZIP file - extracts and finds mod.json
-    private InstallResult InstallFromZip(string zipPath, string modsDirectory, string? targetFolderName)
+    private InstallResult InstallFromZip(string zipPath, ModStore store, string? targetFolderName)
     {
         string tempDir = Path.Combine(Path.GetTempPath(), $"RPGModder_Extract_{Guid.NewGuid():N}");
 
@@ -107,7 +135,7 @@ public class ModInstallerService
 
             // The mod root is the folder containing mod.json
             string modRoot = Path.GetDirectoryName(modJsonPath)!;
-            return InstallFromFolder(modRoot, modsDirectory, targetFolderName);
+            return InstallFromFolder(modRoot, store, targetFolderName);
         }
         catch (Exception ex)
         {
@@ -115,14 +143,12 @@ public class ModInstallerService
         }
         finally
         {
-            // Cleanup temp directory
-            try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); }
-            catch { }
+            TryDeleteTempFolder(tempDir);
         }
     }
 
     // Installs from a folder - copies to mods directory
-    private InstallResult InstallFromFolder(string folderPath, string modsDirectory, string? targetFolderName)
+    private InstallResult InstallFromFolder(string folderPath, ModStore store, string? targetFolderName)
     {
         // First check if mod.json exists directly in the folder
         string directModJson = Path.Combine(folderPath, "mod.json");
@@ -147,8 +173,15 @@ public class ModInstallerService
 
         try
         {
-            var manifest = JsonConvert.DeserializeObject<ModManifest>(File.ReadAllText(modJsonPath));
-            if (manifest == null) return new InstallResult { Success = false, Error = "Failed to parse mod.json" };
+            ModManifest manifest = ModStore.ReadManifestFile(modJsonPath);
+            if (!manifest.IsSupported)
+            {
+                return new InstallResult
+                {
+                    Success = false,
+                    Error = $"mod.json declares schema version {manifest.EffectiveSchemaVersion}, which is newer than this version of RPGModder supports."
+                };
+            }
 
             // Determine folder name
             string folderName;
@@ -169,12 +202,6 @@ public class ModInstallerService
                 folderName = SafePathService.ValidateDirectoryName(folderName, "Mod ID");
             }
 
-            Directory.CreateDirectory(modsDirectory);
-            string targetPath = SafePathService.ResolveContainedPath(modsDirectory, folderName, "Mod install target");
-            string stagingName = $".install-{Guid.NewGuid():N}";
-            string stagingPath = SafePathService.ResolveContainedPath(modsDirectory, stagingName, "Mod install staging path");
-            string rollbackPath = SafePathService.ResolveContainedPath(modsDirectory, $".rollback-{Guid.NewGuid():N}", "Mod rollback path");
-
             NormalizeManifestTargets(manifest);
             ValidateManifestPaths(manifest, folderPath);
 
@@ -183,52 +210,7 @@ public class ModInstallerService
                 op.Target.Contains("mods/", StringComparison.OrdinalIgnoreCase) ||
                 op.Target.Contains("_moddata/", StringComparison.OrdinalIgnoreCase));
 
-            try
-            {
-                FileTreeService.CopyDirectory(folderPath, stagingPath);
-                FileTreeService.WriteAllTextAtomic(
-                    Path.Combine(stagingPath, "mod.json"),
-                    JsonConvert.SerializeObject(manifest, Formatting.Indented));
-
-                if (Directory.Exists(targetPath))
-                {
-                    Directory.Move(targetPath, rollbackPath);
-                }
-
-                Directory.Move(stagingPath, targetPath);
-                if (Directory.Exists(rollbackPath))
-                {
-                    try
-                    {
-                        Directory.Delete(rollbackPath, true);
-                    }
-                    catch
-                    {
-                    }
-                }
-            }
-            catch
-            {
-                // Restore the previous install before any cleanup, so a cleanup failure
-                // cannot leave the original hidden in a dot-folder the catalog skips.
-                if (!Directory.Exists(targetPath) && Directory.Exists(rollbackPath))
-                {
-                    Directory.Move(rollbackPath, targetPath);
-                }
-
-                try
-                {
-                    if (Directory.Exists(stagingPath))
-                    {
-                        Directory.Delete(stagingPath, true);
-                    }
-                }
-                catch (Exception cleanupError) when (cleanupError is IOException or UnauthorizedAccessException)
-                {
-                }
-
-                throw;
-            }
+            store.Install(folderPath, folderName, manifest);
 
             return new InstallResult
             {
@@ -272,7 +254,11 @@ public class ModInstallerService
                     return found;
             }
         }
-        catch { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A folder that cannot be listed holds no readable mod.json; the caller reports none found.
+            Trace.TraceWarning($"A folder could not be searched for mod.json: {rootPath}: {ex.Message}");
+        }
 
         return null;
     }
@@ -299,11 +285,7 @@ public class ModInstallerService
 
         try
         {
-            var manifest = JsonConvert.DeserializeObject<ModManifest>(File.ReadAllText(modJsonPath));
-            if (manifest == null)
-            {
-                return new ValidationResult { IsValid = false, Error = "Invalid mod.json format." };
-            }
+            ModManifest manifest = ModStore.ReadManifestFile(modJsonPath);
 
             return new ValidationResult
             {
@@ -315,6 +297,22 @@ public class ModInstallerService
         catch (Exception ex)
         {
             return new ValidationResult { IsValid = false, Error = $"Failed to parse mod.json: {ex.Message}" };
+        }
+    }
+
+    private static void TryDeleteTempFolder(string tempDir)
+    {
+        try
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The extraction folder is under the system temp folder and holds a copy only.
+            Trace.TraceWarning($"A temporary extraction folder could not be removed: {tempDir}: {ex.Message}");
         }
     }
 

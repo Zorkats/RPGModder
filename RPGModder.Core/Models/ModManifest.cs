@@ -1,11 +1,20 @@
-﻿using System.Collections.Generic;
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace RPGModder.Core.Models;
 
+/// <summary>
+/// A mod's <c>mod.json</c>. A missing <c>schema_version</c> means version 1 (GR-V1); fields this
+/// build does not know are kept and written back unchanged (GR-V5).
+/// </summary>
 public class ModManifest
 {
+    /// <summary>The highest manifest version this build reads and writes.</summary>
+    public const int CurrentSchemaVersion = 2;
+
+    [JsonProperty("schema_version", NullValueHandling = NullValueHandling.Ignore)]
+    public int? SchemaVersion { get; set; }
+
     [JsonProperty("metadata")]
     public ModMetadata Metadata { get; set; } = new();
 
@@ -17,62 +26,15 @@ public class ModManifest
 
     [JsonProperty("plugins_registry")]
     public List<PluginEntry> PluginsRegistry { get; set; } = new();
-}
 
-public class ModMetadata
-{
-    [JsonProperty("name")]
-    public string Name { get; set; } = "Unknown Mod";
+    [JsonExtensionData]
+    public IDictionary<string, JToken> ExtensionData { get; set; } = new Dictionary<string, JToken>();
 
-    [JsonProperty("author")]
-    public string Author { get; set; } = "Unknown";
+    /// <summary>The version the file declares, with a missing field read as 1.</summary>
+    [JsonIgnore]
+    public int EffectiveSchemaVersion => SchemaVersion ?? 1;
 
-    [JsonProperty("version")]
-    public string Version { get; set; } = "1.0";
-
-    [JsonProperty("id")]
-    public string Id { get; set; } = "";
-
-    [JsonProperty("nexus_id")]
-    public int? NexusId { get; set; }
-
-    [JsonProperty("description")]
-    public string Description { get; set; } = "";
-
-    // Cached evaluation flag for O(1) UI performance
-    [JsonProperty("is_fhmm_mod")]
-    public bool IsFhmmMod { get; set; } = false;
-}
-
-public class FileOperation
-{
-    [JsonProperty("source")]
-    public string Source { get; set; } = "";
-
-    [JsonProperty("target")]
-    public string Target { get; set; } = "";
-}
-
-public class JsonPatch
-{
-    [JsonProperty("target")]
-    public string Target { get; set; } = "";
-
-    [JsonProperty("merge_data")]
-    public JObject MergeData { get; set; } = new();
-}
-
-public class PluginEntry
-{
-    [JsonProperty("name")]
-    public string Name { get; set; } = "";
-
-    [JsonProperty("status")]
-    public bool Status { get; set; } = true;
-
-    [JsonProperty("description")]
-    public string Description { get; set; } = "";
-
-    [JsonProperty("parameters")]
-    public Dictionary<string, string> Parameters { get; set; } = new();
+    /// <summary>False for a manifest newer than this build, which is listed as unusable and never rewritten (GR-V2).</summary>
+    [JsonIgnore]
+    public bool IsSupported => EffectiveSchemaVersion <= CurrentSchemaVersion;
 }

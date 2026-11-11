@@ -41,12 +41,8 @@ public sealed class VanillaBackupWorkflow
         try
         {
             // The game folder now holds vanilla, which no profile's record describes.
-            new DeployedStateStore(session.Workspace).Forget();
-            File.Delete(session.Engine.BackupMarkerPath);
-            if (Directory.Exists(session.Workspace.CleanBackup))
-            {
-                Directory.Delete(session.Workspace.CleanBackup, true);
-            }
+            new DeployedStateStore(session.Workspace, session.Files).Forget();
+            new VanillaStore(session.Workspace, session.Layout, session.Files).Discard();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

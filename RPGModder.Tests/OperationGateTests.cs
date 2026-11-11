@@ -6,6 +6,7 @@ using RPGModder.Core.Operations;
 using RPGModder.Core.Platform;
 using RPGModder.Core.Services;
 using Xunit;
+using RPGModder.Core.Workspace;
 
 namespace RPGModder.Tests;
 
@@ -275,7 +276,7 @@ public sealed class OperationGateTests : IDisposable
         string saveFile = Path.Combine(saveFolder, "file1.rpgsave");
         File.WriteAllText(saveFile, "default profile save");
 
-        var profiles = new ProfileRepository();
+        var profiles = new ProfileStore();
         profiles.Save(session.Workspace, "Default", new ModProfile());
         profiles.Save(session.Workspace, "Second", new ModProfile());
         profiles.WriteActive(session.Workspace, "Default");
@@ -434,7 +435,7 @@ public sealed class OperationGateTests : IDisposable
         string saveFile = Path.Combine(saveFolder, "file1.rpgsave");
         File.WriteAllText(saveFile, "default profile save");
 
-        var profiles = new ProfileRepository();
+        var profiles = new ProfileStore();
         profiles.Save(session.Workspace, "Default", new ModProfile());
         profiles.Save(session.Workspace, "Second", new ModProfile());
         profiles.WriteActive(session.Workspace, "Default");

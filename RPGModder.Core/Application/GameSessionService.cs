@@ -15,7 +15,9 @@ public sealed record GameSession(
     GameWorkspacePaths Workspace,
     ModEngine Engine,
     OperationGate Gate,
-    IGameProcessProbe GameProcess);
+    IGameProcessProbe GameProcess,
+    GameLayout Layout,
+    IFileSystemOps Files);
 
 public interface IGameSessionService
 {
@@ -30,6 +32,7 @@ public sealed class GameSessionService : IGameSessionService
     private const string DeployOperation = "Deploy";
 
     private readonly IGameProcessProbe _gameProcess;
+    private readonly IFileSystemOps _files;
 
     public GameSessionService()
         : this(new GameProcessProbe())
@@ -37,8 +40,14 @@ public sealed class GameSessionService : IGameSessionService
     }
 
     public GameSessionService(IGameProcessProbe gameProcess)
+        : this(gameProcess, new FileSystemOps())
+    {
+    }
+
+    public GameSessionService(IGameProcessProbe gameProcess, IFileSystemOps files)
     {
         _gameProcess = gameProcess;
+        _files = files;
     }
 
     public async Task<GameSession> OpenAsync(string executablePath, CancellationToken cancellationToken = default)
@@ -67,9 +76,11 @@ public sealed class GameSessionService : IGameSessionService
 
             using (lease)
             {
-                var engine = new ModEngine(fullExecutablePath);
+                // The one workspace and the one layout of this game (OWN-1, OWN-2), passed to everything below.
+                GameLayout layout = GameLayout.Detect(gameRoot);
+                var engine = new ModEngine(fullExecutablePath, workspace, layout, _files);
                 engine.InitializeSafeState();
-                return new GameSession(fullExecutablePath, gameRoot, workspace, engine, gate, _gameProcess);
+                return new GameSession(fullExecutablePath, gameRoot, workspace, engine, gate, _gameProcess, layout, _files);
             }
         }, cancellationToken);
     }
@@ -127,11 +138,7 @@ public sealed class GameSessionService : IGameSessionService
     // The UI keeps editing its profile while a workflow runs on the thread pool.
     private static ModProfile Snapshot(ModProfile profile)
     {
-        return new ModProfile
-        {
-            EnabledMods = profile.EnabledMods.ToList(),
-            LoadOrder = profile.LoadOrder.ToList(),
-        };
+        return profile.Clone();
     }
 
     private static OperationResult Deploy(GameSession session, string profileName, ModProfile profile)
@@ -155,7 +162,7 @@ public sealed class GameSessionService : IGameSessionService
         string planHash,
         OperationResult result)
     {
-        var store = new DeployedStateStore(session.Workspace);
+        var store = new DeployedStateStore(session.Workspace, session.Files);
         var state = new DeployedState(
             DeployedState.CurrentSchemaVersion,
             profileName,

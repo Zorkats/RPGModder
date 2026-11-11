@@ -21,6 +21,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
+using RPGModder.Core.Workspace;
 
 namespace RPGModder.UI;
 
@@ -70,7 +71,7 @@ public partial class MainWindow
         if (profiles.Contains(_currentProfileName))
             CboProfiles.SelectedItem = _currentProfileName;
         else
-            CboProfiles.SelectedItem = ProfileRepository.DefaultProfileName;
+            CboProfiles.SelectedItem = ProfileStore.DefaultProfileName;
     }
 
     private async void CboProfiles_SelectionChanged(object? sender, SelectionChangedEventArgs e)
@@ -157,8 +158,8 @@ public partial class MainWindow
     {
         if (_gameSession == null) return;
 
-        string currentProfile = CboProfiles.SelectedItem?.ToString() ?? ProfileRepository.DefaultProfileName;
-        if (currentProfile == ProfileRepository.DefaultProfileName)
+        string currentProfile = CboProfiles.SelectedItem?.ToString() ?? ProfileStore.DefaultProfileName;
+        if (currentProfile == ProfileStore.DefaultProfileName)
         {
             await new RPGModder.UI.Dialogs.MessageBox("Error", "You cannot delete the Default profile.").ShowDialog(this);
             return;
@@ -175,7 +176,7 @@ public partial class MainWindow
 
         // Switch away first, so a refused switch leaves the profile in place and still active.
         if (currentProfile == _currentProfileName
-            && !await SwitchProfileAsync(ProfileRepository.DefaultProfileName))
+            && !await SwitchProfileAsync(ProfileStore.DefaultProfileName))
         {
             return;
         }

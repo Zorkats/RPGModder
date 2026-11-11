@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using Newtonsoft.Json;
 using RPGModder.Core.Models;
-using RPGModder.Core.Services;
+using RPGModder.Core.Platform;
 
 namespace RPGModder.Core.Workspace;
 
@@ -12,10 +12,17 @@ namespace RPGModder.Core.Workspace;
 public sealed class DeployedStateStore
 {
     private readonly string _path;
+    private readonly IFileSystemOps _files;
 
     public DeployedStateStore(GameWorkspacePaths workspace)
+        : this(workspace, new FileSystemOps())
+    {
+    }
+
+    public DeployedStateStore(GameWorkspacePaths workspace, IFileSystemOps files)
     {
         _path = workspace.DeployedState;
+        _files = files;
     }
 
     public DeployedState? Read()
@@ -46,14 +53,11 @@ public sealed class DeployedStateStore
 
     public void Write(DeployedState state)
     {
-        FileTreeService.WriteAllTextAtomic(_path, JsonConvert.SerializeObject(state, Formatting.Indented));
+        _files.WriteAllTextAtomic(_path, JsonConvert.SerializeObject(state, Formatting.Indented));
     }
 
     public void Forget()
     {
-        if (File.Exists(_path))
-        {
-            File.Delete(_path);
-        }
+        _files.DeleteFile(_path);
     }
 }

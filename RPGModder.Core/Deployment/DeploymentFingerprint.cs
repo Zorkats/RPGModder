@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using RPGModder.Core.Models;
 using RPGModder.Core.Services;
+using RPGModder.Core.Workspace;
 
 namespace RPGModder.Core.Deployment;
 

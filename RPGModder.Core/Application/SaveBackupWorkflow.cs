@@ -1,7 +1,6 @@
-using System.Globalization;
 using RPGModder.Core.Models;
 using RPGModder.Core.Operations;
-using RPGModder.Core.Services;
+using RPGModder.Core.Workspace;
 
 namespace RPGModder.Core.Application;
 
@@ -66,9 +65,7 @@ public sealed class SaveBackupWorkflow
         var result = new OperationResult();
         try
         {
-            string save = RequireInside(session.GameRoot, saveFilePath, "Save file");
-            Directory.CreateDirectory(session.Workspace.SaveBackups);
-            File.Copy(save, BackupPath(session, save, string.Empty), true);
+            SavesOf(session).BackupFile(saveFilePath, _clock.GetLocalNow());
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
@@ -83,14 +80,7 @@ public sealed class SaveBackupWorkflow
         var result = new OperationResult();
         try
         {
-            string save = RequireInside(session.GameRoot, saveFilePath, "Save file");
-            string backup = RequireInside(session.Workspace.SaveBackups, backupFilePath, "Save backup");
-            if (File.Exists(save))
-            {
-                File.Copy(save, BackupPath(session, save, "_PRE_RESTORE"), true);
-            }
-
-            File.Copy(backup, save, true);
+            SavesOf(session).RestoreFile(saveFilePath, backupFilePath, _clock.GetLocalNow());
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
@@ -100,15 +90,8 @@ public sealed class SaveBackupWorkflow
         return result;
     }
 
-    private string BackupPath(GameSession session, string saveFile, string suffix)
+    private static SaveStore SavesOf(GameSession session)
     {
-        string stamp = _clock.GetLocalNow().ToString("MMdd_HHmm", CultureInfo.InvariantCulture);
-        return Path.Combine(session.Workspace.SaveBackups, $"{Path.GetFileName(saveFile)}{suffix}_{stamp}.bak");
-    }
-
-    private static string RequireInside(string root, string path, string fieldName)
-    {
-        string relative = Path.GetRelativePath(root, Path.GetFullPath(path));
-        return SafePathService.ResolveContainedPath(root, relative, fieldName);
+        return new SaveStore(session.Workspace, session.Layout, session.Files);
     }
 }

@@ -21,6 +21,7 @@ using System.Threading.Tasks;
 using System.Web;
 using Avalonia;
 using RPGModder.UI.Dialogs;
+using RPGModder.Core.Workspace;
 
 namespace RPGModder.UI;
 
@@ -49,7 +50,7 @@ public partial class MainWindow : Window
     private readonly UpdateService _updater = new();
     private readonly DownloadManager _downloadManager = new();
     private readonly IModCatalogService _modCatalog = new ModCatalogService();
-    private readonly IProfileRepository _profiles = new ProfileRepository();
+    private readonly IProfileStore _profiles = new ProfileStore();
     private readonly IDeploymentHistoryService _deploymentHistory = new DeploymentHistoryService();
     private readonly IGameSessionService _gameSessions = new GameSessionService();
     private readonly ProfileWorkflow _profileWorkflow = new();

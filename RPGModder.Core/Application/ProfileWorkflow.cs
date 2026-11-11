@@ -1,6 +1,6 @@
 using RPGModder.Core.Models;
 using RPGModder.Core.Operations;
-using RPGModder.Core.Services;
+using RPGModder.Core.Workspace;
 
 namespace RPGModder.Core.Application;
 
@@ -13,14 +13,14 @@ public sealed class ProfileWorkflow
     private const string SwitchOperation = "Switch profile";
     private const string DeleteOperation = "Delete profile";
 
-    private readonly IProfileRepository _profiles;
+    private readonly IProfileStore? _profiles;
 
+    /// <summary>Uses a profile store on the session's file operations.</summary>
     public ProfileWorkflow()
-        : this(new ProfileRepository())
     {
     }
 
-    public ProfileWorkflow(IProfileRepository profiles)
+    public ProfileWorkflow(IProfileStore profiles)
     {
         _profiles = profiles;
     }
@@ -86,9 +86,19 @@ public sealed class ProfileWorkflow
     private OperationResult WriteProfile(GameSession session, string profileName, ModProfile profile)
     {
         var result = new OperationResult();
+        IProfileStore profiles = ProfilesOf(session);
         try
         {
-            _profiles.Save(session.Workspace, profileName, profile);
+            if (!profiles.CanWrite(session.Workspace, profileName, profile))
+            {
+                result.AddError(
+                    DiagnosticCodes.ProfileSchemaUnsupported,
+                    "The profile was written by a newer version of RPGModder and is not modified.",
+                    profileName);
+                return result;
+            }
+
+            profiles.Save(session.Workspace, profileName, profile);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
@@ -103,7 +113,7 @@ public sealed class ProfileWorkflow
         var result = new OperationResult();
         try
         {
-            session.Engine.SwapSaveFiles(fromProfileName, toProfileName);
+            SavesOf(session).Swap(fromProfileName, toProfileName);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
@@ -113,7 +123,7 @@ public sealed class ProfileWorkflow
 
         try
         {
-            _profiles.WriteActive(session.Workspace, toProfileName);
+            ProfilesOf(session).WriteActive(session.Workspace, toProfileName);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -130,7 +140,7 @@ public sealed class ProfileWorkflow
     {
         try
         {
-            session.Engine.SwapSaveFiles(toProfileName, fromProfileName);
+            SavesOf(session).Swap(toProfileName, fromProfileName);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
@@ -146,7 +156,7 @@ public sealed class ProfileWorkflow
         var result = new OperationResult();
         try
         {
-            _profiles.Delete(session.Workspace, profileName);
+            ProfilesOf(session).Delete(session.Workspace, profileName);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
         {
@@ -154,5 +164,15 @@ public sealed class ProfileWorkflow
         }
 
         return result;
+    }
+
+    private IProfileStore ProfilesOf(GameSession session)
+    {
+        return _profiles ?? new ProfileStore(session.Files);
+    }
+
+    private static SaveStore SavesOf(GameSession session)
+    {
+        return new SaveStore(session.Workspace, session.Layout, session.Files);
     }
 }
