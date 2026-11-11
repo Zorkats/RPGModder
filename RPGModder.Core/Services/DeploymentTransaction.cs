@@ -94,6 +94,13 @@ public sealed class DeploymentTransaction : IDisposable
                 directory,
                 managedFolders,
                 managedFiles);
+            if (!Directory.Exists(transaction._snapshotDirectory))
+            {
+                // Without a snapshot there is nothing to restore; rolling back would only delete live files.
+                TryDelete(directory);
+                continue;
+            }
+
             transaction.Rollback();
             recovered.Add(transaction.Id);
         }
@@ -101,15 +108,38 @@ public sealed class DeploymentTransaction : IDisposable
         return recovered;
     }
 
+    public bool IsCompleted => _completed;
+
     public void Commit()
     {
+        if (_completed)
+        {
+            throw new InvalidOperationException("The deployment transaction has already completed.");
+        }
+
         WriteJournal("committed");
         _completed = true;
         TryDelete(_transactionDirectory);
     }
 
+    /// <summary>
+    /// Restores the snapshot taken at Begin. Does nothing once the transaction has
+    /// committed or rolled back, because the snapshot no longer exists and restoring
+    /// from it would delete the live game folders.
+    /// </summary>
     public void Rollback()
     {
+        if (_completed)
+        {
+            return;
+        }
+
+        if (!Directory.Exists(_snapshotDirectory))
+        {
+            throw new InvalidOperationException(
+                $"Deployment snapshot is missing at '{_snapshotDirectory}'. Live files were left untouched.");
+        }
+
         RestoreSnapshot();
         WriteJournal("rolled-back");
         _completed = true;

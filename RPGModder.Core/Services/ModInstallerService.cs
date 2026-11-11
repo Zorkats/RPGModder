@@ -209,14 +209,22 @@ public class ModInstallerService
             }
             catch
             {
-                if (Directory.Exists(stagingPath))
-                {
-                    Directory.Delete(stagingPath, true);
-                }
-
+                // Restore the previous install before any cleanup, so a cleanup failure
+                // cannot leave the original hidden in a dot-folder the catalog skips.
                 if (!Directory.Exists(targetPath) && Directory.Exists(rollbackPath))
                 {
                     Directory.Move(rollbackPath, targetPath);
+                }
+
+                try
+                {
+                    if (Directory.Exists(stagingPath))
+                    {
+                        Directory.Delete(stagingPath, true);
+                    }
+                }
+                catch (Exception cleanupError) when (cleanupError is IOException or UnauthorizedAccessException)
+                {
                 }
 
                 throw;

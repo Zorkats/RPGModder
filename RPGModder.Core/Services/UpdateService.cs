@@ -151,51 +151,13 @@ public class UpdateService : IDisposable
 
     private static void PrepareWindowsUpdate(string currentDir, string updateStaging)
     {
-        string backupStaging = Path.Combine(currentDir, "_update_backup");
-        if (Directory.Exists(backupStaging)) Directory.Delete(backupStaging, true);
+        // 2.0.0 created this folder inside the install and could never fill it.
+        string legacyBackup = Path.Combine(currentDir, "_update_backup");
+        if (Directory.Exists(legacyBackup)) Directory.Delete(legacyBackup, true);
 
-        string batPath = Path.Combine(currentDir, "update_restart.bat");
         string exeFileName = Path.GetFileName(Process.GetCurrentProcess().MainModule?.FileName ?? "RPGModder.exe");
-
-        string script = $"""
-            @echo off
-            echo Waiting for RPGModder to close...
-            timeout /t 2 /nobreak >nul
-
-            echo Creating rollback backup...
-            mkdir "_update_backup" >nul 2>&1
-            xcopy /s /y /q ".\*" "_update_backup\" /exclude:update_excludes.txt >nul 2>&1
-
-            echo Applying update...
-            xcopy /s /y /q "_update_staging\*" "." >nul 2>&1
-            if errorlevel 1 goto rollback
-
-            echo Cleaning up...
-            rmdir /s /q "_update_staging" >nul 2>&1
-            rmdir /s /q "_update_backup" >nul 2>&1
-            del "update_excludes.txt" >nul 2>&1
-            echo Restarting...
-            start "" "{exeFileName}"
-            del "%~f0"
-            exit /b 0
-
-            :rollback
-            echo Update failed. Restoring previous version...
-            xcopy /s /y /q "_update_backup\*" "." >nul 2>&1
-            rmdir /s /q "_update_staging" >nul 2>&1
-            rmdir /s /q "_update_backup" >nul 2>&1
-            del "update_excludes.txt" >nul 2>&1
-            start "" "{exeFileName}"
-            del "%~f0"
-            """;
-        File.WriteAllLines(Path.Combine(currentDir, "update_excludes.txt"),
-        [
-            "_update_staging",
-            "_update_backup",
-            "update_restart.bat",
-            "update_excludes.txt"
-        ]);
-        File.WriteAllText(batPath, script);
+        string backup = Path.Combine(Path.GetTempPath(), $"RPGModder_Backup_{Guid.NewGuid():N}");
+        string batPath = WriteWindowsUpdateFiles(currentDir, exeFileName, backup);
 
         Process.Start(new ProcessStartInfo
         {
@@ -226,30 +188,14 @@ public class UpdateService : IDisposable
 
         string backup = Path.Combine(Path.GetTempPath(), $"RPGModder_Backup_{Guid.NewGuid():N}");
         string scriptPath = Path.Combine(Path.GetTempPath(), $"RPGModder_Update_{Guid.NewGuid():N}.sh");
-        string currentQuoted = ShellQuote(Path.TrimEndingDirectorySeparator(currentDir));
-        string stagingQuoted = ShellQuote(updateStaging);
-        string backupQuoted = ShellQuote(backup);
-        string executableQuoted = ShellQuote(Path.Combine(currentDir, executableName));
-        string scriptQuoted = ShellQuote(scriptPath);
-
-        string script = $"""
-            #!/bin/sh
-            set -u
-            sleep 2
-            mkdir -p {backupQuoted}
-            cp -a {currentQuoted}/. {backupQuoted}/
-            if cp -a {stagingQuoted}/. {currentQuoted}/; then
-                chmod u+x {executableQuoted}
-                rm -rf {stagingQuoted} {backupQuoted}
-                rm -f {scriptQuoted}
-                exec {executableQuoted}
-            fi
-            cp -a {backupQuoted}/. {currentQuoted}/
-            rm -rf {stagingQuoted} {backupQuoted}
-            rm -f {scriptQuoted}
-            exec {executableQuoted}
-            """;
-        File.WriteAllText(scriptPath, script + Environment.NewLine);
+        string script = BuildLinuxUpdateScript(
+            Path.TrimEndingDirectorySeparator(currentDir),
+            updateStaging,
+            backup,
+            Path.Combine(currentDir, executableName),
+            scriptPath,
+            waitSeconds: 2);
+        File.WriteAllText(scriptPath, script);
 
         Process.Start(new ProcessStartInfo
         {
@@ -259,6 +205,131 @@ public class UpdateService : IDisposable
             ArgumentList = { scriptPath }
         });
         Environment.Exit(0);
+    }
+
+    /// <summary>
+    /// Writes the update script and its exclude list into the install folder and returns the script path.
+    /// </summary>
+    internal static string WriteWindowsUpdateFiles(string currentDir, string exeFileName, string backupDir)
+    {
+        string batPath = Path.Combine(currentDir, "update_restart.bat");
+        File.WriteAllLines(Path.Combine(currentDir, "update_excludes.txt"),
+        [
+            "_update_staging",
+            "update_restart.bat",
+            "update_excludes.txt"
+        ]);
+        File.WriteAllText(batPath, BuildWindowsUpdateScript(exeFileName, backupDir));
+        return batPath;
+    }
+
+    /// <summary>
+    /// Builds the batch script that swaps in a staged update after RPGModder exits.
+    /// Mirrors the Linux script: no backup means no update, and a failed restore keeps the backup.
+    /// The backup folder must be outside the install, because xcopy refuses to copy a folder into itself.
+    /// </summary>
+    internal static string BuildWindowsUpdateScript(string exeFileName, string backupDir)
+    {
+        // A percent sign in a batch file starts a variable, so a literal one is doubled.
+        string backup = backupDir.Replace("%", "%%", StringComparison.Ordinal);
+
+        return $"""
+            @echo off
+            echo Waiting for RPGModder to close...
+            timeout /t 2 /nobreak >nul
+
+            echo Creating rollback backup...
+            mkdir "{backup}" >nul 2>&1
+            xcopy /s /y /q ".\*" "{backup}\" /exclude:update_excludes.txt >nul 2>&1
+            if errorlevel 1 goto abort
+
+            echo Applying update...
+            xcopy /s /y /q "_update_staging\*" "." >nul 2>&1
+            if errorlevel 1 goto rollback
+
+            echo Cleaning up...
+            rmdir /s /q "_update_staging" >nul 2>&1
+            rmdir /s /q "{backup}" >nul 2>&1
+            del "update_excludes.txt" >nul 2>&1
+            echo Restarting...
+            start "" "{exeFileName}"
+            del "%~f0"
+            exit /b 0
+
+            :rollback
+            echo Update failed. Restoring previous version...
+            xcopy /s /y /q "{backup}\*" "." >nul 2>&1
+            if errorlevel 1 goto keepbackup
+            rmdir /s /q "_update_staging" >nul 2>&1
+            rmdir /s /q "{backup}" >nul 2>&1
+            del "update_excludes.txt" >nul 2>&1
+            start "" "{exeFileName}"
+            del "%~f0"
+            exit /b 1
+
+            :abort
+            echo The current version could not be backed up, so the update was not applied.
+            rmdir /s /q "_update_staging" >nul 2>&1
+            rmdir /s /q "{backup}" >nul 2>&1
+            del "update_excludes.txt" >nul 2>&1
+            start "" "{exeFileName}"
+            del "%~f0"
+            exit /b 1
+
+            :keepbackup
+            echo The previous version could not be restored. A full backup is kept at: "{backup}"
+            rmdir /s /q "_update_staging" >nul 2>&1
+            del "update_excludes.txt" >nul 2>&1
+            pause
+            exit /b 1
+            """.ReplaceLineEndings("\r\n");
+    }
+
+    /// <summary>
+    /// Builds the POSIX script that swaps in a staged update after RPGModder exits.
+    /// The previous version is backed up first; if the update copy fails it is restored,
+    /// and if the backup or the restore fails the backup is kept instead of deleted.
+    /// </summary>
+    internal static string BuildLinuxUpdateScript(
+        string currentDir,
+        string updateStaging,
+        string backupDir,
+        string executablePath,
+        string scriptPath,
+        int waitSeconds)
+    {
+        string current = ShellQuote(currentDir);
+        string staging = ShellQuote(updateStaging);
+        string backup = ShellQuote(backupDir);
+        string executable = ShellQuote(executablePath);
+        string self = ShellQuote(scriptPath);
+
+        return $"""
+            #!/bin/sh
+            set -u
+            sleep {waitSeconds}
+            if ! mkdir -p {backup} || ! cp -a {current}/. {backup}/; then
+                echo "RPGModder update skipped: the current version could not be backed up." >&2
+                rm -rf {staging} {backup}
+                rm -f {self}
+                exec {executable}
+            fi
+            if cp -a {staging}/. {current}/; then
+                chmod u+x {executable}
+                rm -rf {staging} {backup}
+                rm -f {self}
+                exec {executable}
+            fi
+            echo "RPGModder update failed. Restoring the previous version..." >&2
+            if cp -a {backup}/. {current}/; then
+                rm -rf {staging} {backup}
+                rm -f {self}
+                exec {executable}
+            fi
+            echo "RPGModder could not restore the previous version. A full backup is kept at:" {backup} >&2
+            exit 1
+
+            """.ReplaceLineEndings("\n");
     }
 
     private static string ShellQuote(string value) => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";

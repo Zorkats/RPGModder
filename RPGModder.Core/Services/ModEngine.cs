@@ -206,37 +206,67 @@ public class ModEngine
         Directory.CreateDirectory(stagingDir);
         Directory.CreateDirectory(rollbackDir);
 
+        bool keepRollback = false;
         try
         {
+            // Phase 1 copies only. The live save folder is not touched, so a failure here
+            // leaves every save exactly where it was.
             foreach (var file in liveFiles)
             {
-                string fileName = Path.GetFileName(file);
-                File.Copy(file, Path.Combine(oldStorage, fileName), true);
-                File.Copy(file, Path.Combine(rollbackDir, fileName), true);
+                File.Copy(file, Path.Combine(rollbackDir, Path.GetFileName(file)), true);
             }
 
-            if (Directory.Exists(newStorage))
+            foreach (var file in liveFiles)
             {
-                foreach (var file in Directory.GetFiles(newStorage))
+                File.Copy(file, Path.Combine(oldStorage, Path.GetFileName(file)), true);
+            }
+
+            foreach (var file in Directory.GetFiles(newStorage))
+            {
+                File.Copy(file, Path.Combine(stagingDir, Path.GetFileName(file)), true);
+            }
+
+            // Phase 2 replaces the live saves. rollbackDir now holds the complete previous set.
+            try
+            {
+                foreach (var file in liveFiles)
                 {
-                    string fileName = Path.GetFileName(file);
-                    File.Copy(file, Path.Combine(stagingDir, fileName), true);
+                    File.Delete(file);
+                }
+
+                foreach (var file in Directory.GetFiles(stagingDir))
+                {
+                    File.Move(file, Path.Combine(liveSavePath, Path.GetFileName(file)), true);
                 }
             }
-
-            foreach (var file in liveFiles)
+            catch (Exception swapError)
             {
-                File.Delete(file);
-            }
+                if (!TryRestoreSaves(liveSavePath, rollbackDir, extensions))
+                {
+                    keepRollback = true;
+                    throw new IOException(
+                        $"Switching saves failed and the previous saves could not be put back. They are kept in '{rollbackDir}'.",
+                        swapError);
+                }
 
-            foreach (var file in Directory.GetFiles(stagingDir))
-            {
-                string fileName = Path.GetFileName(file);
-                string dest = Path.Combine(liveSavePath, fileName);
-                File.Move(file, dest, true);
+                throw;
             }
         }
-        catch
+        finally
+        {
+            try { if (Directory.Exists(stagingDir)) Directory.Delete(stagingDir, true); }
+            catch { }
+            if (!keepRollback)
+            {
+                try { if (Directory.Exists(rollbackDir)) Directory.Delete(rollbackDir, true); }
+                catch { }
+            }
+        }
+    }
+
+    private static bool TryRestoreSaves(string liveSavePath, string rollbackDir, string[] extensions)
+    {
+        try
         {
             foreach (string file in Directory.GetFiles(liveSavePath))
             {
@@ -251,14 +281,11 @@ public class ModEngine
                 File.Copy(file, Path.Combine(liveSavePath, Path.GetFileName(file)), true);
             }
 
-            throw;
+            return true;
         }
-        finally
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            try { if (Directory.Exists(stagingDir)) Directory.Delete(stagingDir, true); }
-            catch { }
-            try { if (Directory.Exists(rollbackDir)) Directory.Delete(rollbackDir, true); }
-            catch { }
+            return false;
         }
     }
 
@@ -280,24 +307,25 @@ public class ModEngine
         try
         {
             RebuildGameCore(profile, LastOperationResult);
-            if (!LastOperationResult.Success)
+            if (LastOperationResult.Success)
+            {
+                transaction.Commit();
+            }
+            else
             {
                 transaction.Rollback();
-                WriteDeploymentHistory(profile, LastOperationResult);
-                return LastOperationResult;
             }
-
-            transaction.Commit();
-            WriteDeploymentHistory(profile, LastOperationResult);
-            return LastOperationResult;
         }
         catch (Exception ex)
         {
             LastOperationResult.AddError("deployment.failed", ex.Message);
             transaction.Rollback();
-            WriteDeploymentHistory(profile, LastOperationResult);
-            return LastOperationResult;
         }
+
+        // History is a record of the outcome, never part of it: a failed write must not
+        // roll back a committed deployment.
+        TryWriteDeploymentHistory(profile, LastOperationResult);
+        return LastOperationResult;
     }
 
     private void RebuildGameCore(ModProfile profile, OperationResult result)
@@ -843,6 +871,18 @@ public class ModEngine
         }
 
         return targetPath;
+    }
+
+    private void TryWriteDeploymentHistory(ModProfile profile, OperationResult result)
+    {
+        try
+        {
+            WriteDeploymentHistory(profile, result);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            result.AddWarning("history.write_failed", $"The deployment history could not be recorded: {ex.Message}");
+        }
     }
 
     private void WriteDeploymentHistory(ModProfile profile, OperationResult result)
