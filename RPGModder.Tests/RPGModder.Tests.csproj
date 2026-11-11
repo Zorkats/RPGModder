@@ -20,6 +20,11 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!-- The tests run from an artifacts folder outside the repository, so the golden cases travel with the build output (merge-seam R-2). -->
+        <None Update="Merge\Golden\**" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <ItemGroup>
       <ProjectReference Include="..\RPGModder.Core\RPGModder.Core.csproj" />
     </ItemGroup>
 
