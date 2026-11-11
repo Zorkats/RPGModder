@@ -25,8 +25,8 @@ public sealed class WorkspaceMigrationService
     {
         paths.EnsureCreated();
         var result = new WorkspaceMigrationResult();
-        int existingSchemaVersion = ReadSchemaVersion(paths.SchemaMarker);
-        if (existingSchemaVersion >= GameWorkspacePaths.CurrentSchemaVersion)
+        int existingSchemaVersion = ReadSchemaVersion(paths);
+        if (existingSchemaVersion >= GameWorkspacePaths.LegacyImportSchemaVersion)
         {
             return result;
         }
@@ -60,14 +60,42 @@ public sealed class WorkspaceMigrationService
 
         ImportFileMissing(paths.LegacyActiveProfileMarker, paths.ActiveProfileMarker);
 
-        var marker = new WorkspaceSchemaMarker
-        {
-            SchemaVersion = GameWorkspacePaths.CurrentSchemaVersion,
-            MigratedUtc = DateTime.UtcNow
-        };
-        _files.WriteAllTextAtomic(paths.SchemaMarker, JsonConvert.SerializeObject(marker, Formatting.Indented));
+        WriteSchemaVersion(paths, GameWorkspacePaths.LegacyImportSchemaVersion, DateTimeOffset.UtcNow);
         result.SchemaUpgraded = true;
         return result;
+    }
+
+    /// <summary>Records the workspace schema version in <c>workspace.json</c>, atomically.</summary>
+    public void WriteSchemaVersion(GameWorkspacePaths paths, int version, DateTimeOffset utcNow)
+    {
+        var marker = new WorkspaceSchemaMarker
+        {
+            SchemaVersion = version,
+            MigratedUtc = utcNow.UtcDateTime
+        };
+        _files.WriteAllTextAtomic(paths.SchemaMarker, JsonConvert.SerializeObject(marker, Formatting.Indented));
+    }
+
+    /// <summary>The workspace schema version in <c>workspace.json</c>; 0 when the file is missing or unreadable.</summary>
+    public static int ReadSchemaVersion(GameWorkspacePaths paths)
+    {
+        string markerPath = paths.SchemaMarker;
+        if (!File.Exists(markerPath))
+        {
+            return 0;
+        }
+
+        try
+        {
+            WorkspaceSchemaMarker? marker = JsonConvert.DeserializeObject<WorkspaceSchemaMarker>(File.ReadAllText(markerPath));
+            return marker?.SchemaVersion ?? 0;
+        }
+        catch (JsonException ex)
+        {
+            // An unreadable marker records no version, so the import runs again. It never overwrites.
+            System.Diagnostics.Trace.TraceWarning($"workspace.json is not valid JSON and the legacy import runs again: {ex.Message}");
+            return 0;
+        }
     }
 
     private int ImportDirectoryMissing(string source, string destination)
@@ -118,26 +146,6 @@ public sealed class WorkspaceMigrationService
 
         _files.CopyFile(source, destination);
         return true;
-    }
-
-    private static int ReadSchemaVersion(string markerPath)
-    {
-        if (!File.Exists(markerPath))
-        {
-            return 0;
-        }
-
-        try
-        {
-            WorkspaceSchemaMarker? marker = JsonConvert.DeserializeObject<WorkspaceSchemaMarker>(File.ReadAllText(markerPath));
-            return marker?.SchemaVersion ?? 0;
-        }
-        catch (JsonException ex)
-        {
-            // An unreadable marker records no version, so the import runs again. It never overwrites.
-            System.Diagnostics.Trace.TraceWarning($"workspace.json is not valid JSON and the legacy import runs again: {ex.Message}");
-            return 0;
-        }
     }
 
     private static int CountMissingTopLevelDirectories(string source, string destination)

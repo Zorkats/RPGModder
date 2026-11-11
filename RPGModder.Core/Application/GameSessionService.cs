@@ -17,7 +17,9 @@ public sealed record GameSession(
     OperationGate Gate,
     IGameProcessProbe GameProcess,
     GameLayout Layout,
-    IFileSystemOps Files);
+    IFileSystemOps Files,
+    IStoreManifestSource Store,
+    TimeProvider Clock);
 
 public interface IGameSessionService
 {
@@ -33,6 +35,8 @@ public sealed class GameSessionService : IGameSessionService
 
     private readonly IGameProcessProbe _gameProcess;
     private readonly IFileSystemOps _files;
+    private readonly IStoreManifestSource _store;
+    private readonly TimeProvider _clock;
 
     public GameSessionService()
         : this(new GameProcessProbe())
@@ -45,9 +49,22 @@ public sealed class GameSessionService : IGameSessionService
     }
 
     public GameSessionService(IGameProcessProbe gameProcess, IFileSystemOps files)
+        : this(gameProcess, files, SteamStore(files), TimeProvider.System)
+    {
+    }
+
+    public GameSessionService(IGameProcessProbe gameProcess, IFileSystemOps files, IStoreManifestSource store, TimeProvider clock)
     {
         _gameProcess = gameProcess;
         _files = files;
+        _store = store;
+        _clock = clock;
+    }
+
+    /// <summary>The store source of a real session: Steam's own manifests, read only, and Steam's link handler.</summary>
+    public static IStoreManifestSource SteamStore(IFileSystemOps files)
+    {
+        return new SteamDepotManifestReader(SteamLibraryLocator.GetSteamRoots, files, new SteamLaunchService());
     }
 
     public async Task<GameSession> OpenAsync(string executablePath, CancellationToken cancellationToken = default)
@@ -78,9 +95,9 @@ public sealed class GameSessionService : IGameSessionService
             {
                 // The one workspace and the one layout of this game (OWN-1, OWN-2), passed to everything below.
                 GameLayout layout = GameLayout.Detect(gameRoot);
-                var engine = new ModEngine(fullExecutablePath, workspace, layout, _files);
+                var engine = new ModEngine(fullExecutablePath, workspace, layout, _files, _store, _clock);
                 engine.InitializeSafeState();
-                return new GameSession(fullExecutablePath, gameRoot, workspace, engine, gate, _gameProcess, layout, _files);
+                return new GameSession(fullExecutablePath, gameRoot, workspace, engine, gate, _gameProcess, layout, _files, _store, _clock);
             }
         }, cancellationToken);
     }
@@ -143,16 +160,83 @@ public sealed class GameSessionService : IGameSessionService
 
     private static OperationResult Deploy(GameSession session, string profileName, ModProfile profile)
     {
+        OperationResult baseline = CheckBaseline(session);
+        if (!baseline.Success)
+        {
+            return baseline;
+        }
+
         // The gate keeps installs and removals out while the deploy runs, so the mods hashed here are
         // the mods the deploy reads.
         string planHash = DeploymentFingerprint.Compute(session.Workspace, profile);
         OperationResult result = session.Engine.RebuildGame(profile);
+        foreach (OperationDiagnostic diagnostic in baseline.Diagnostics)
+        {
+            result.Add(diagnostic);
+        }
+
         if (result.Success)
         {
             RecordDeployedState(session, profileName, profile, planHash, result);
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// GR-V6 and TX-24: no deploy runs without a backup, or with an unverified one the player has not
+    /// chosen to keep. A kept or player-modified base lets the deploy run with a warning.
+    /// </summary>
+    public static OperationResult CheckBaseline(GameSession session)
+    {
+        var result = new OperationResult();
+        VanillaManifest? manifest;
+        try
+        {
+            manifest = new VanillaStore(session.Workspace, session.Layout, session.Files).ReadManifest();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            result.AddError(
+                DiagnosticCodes.WorkspaceBaselineUnverified,
+                $"The vanilla backup's manifest cannot be read, so the backup is not trusted. Rebuild it: {ex.Message}",
+                session.Workspace.VanillaManifest);
+            return result;
+        }
+
+        if (manifest == null)
+        {
+            result.AddError(
+                DiagnosticCodes.WorkspaceBaselineUnverified,
+                "There is no vanilla backup yet. Rebuild it before deploying.",
+                session.Workspace.CleanBackup);
+        }
+        else if (manifest.BlocksDeploy)
+        {
+            result.AddError(
+                DiagnosticCodes.WorkspaceBaselineUnverified,
+                "The vanilla backup was migrated from an older version and could not be proven. Choose \"Rebuild\" or \"Keep this backup\".",
+                AuditSubject(manifest));
+        }
+        else if (manifest.WarnsOnDeploy)
+        {
+            result.AddWarning(
+                DiagnosticCodes.WorkspaceBaselineUnverified,
+                manifest.Baseline == VanillaBaseline.PlayerModified
+                    ? $"The vanilla backup is your own base and differs from the store's files: {manifest.BaseDifferences}."
+                    : "The vanilla backup was kept without proof.",
+                AuditSubject(manifest));
+        }
+
+        return result;
+    }
+
+    private static string? AuditSubject(VanillaManifest manifest)
+    {
+        BaselineAudit? audit = manifest.Audit;
+        return audit == null
+            ? null
+            : $"audit: {audit.SameContent} same content, {audit.SameContentAndTime} same content and time";
     }
 
     private static void RecordDeployedState(

@@ -278,6 +278,11 @@ public partial class MainWindow
 
             OperationResult result = await _gameSessions.DeployAsync(_gameSession, _currentProfileName, _profile);
 
+            if (await HandleBaselineRefusalAsync(result))
+            {
+                return false;
+            }
+
             if (WasRefused(result))
             {
                 SetStatus($"Cannot deploy: {FirstErrorMessage(result)}", false);

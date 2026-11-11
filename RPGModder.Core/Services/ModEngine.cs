@@ -24,6 +24,10 @@ public class ModEngine
     private readonly GameWorkspacePaths _workspace;
     private readonly VanillaStore _vanilla;
     private readonly SaveStore _saves;
+    private readonly GameLayout _layout;
+    private readonly IFileSystemOps _files;
+    private readonly IStoreManifestSource _storeSource;
+    private readonly TimeProvider _clock;
 
     // --- Configuration ---
     public bool UseMerging { get; set; } = true;
@@ -35,6 +39,13 @@ public class ModEngine
     public OperationResult LastOperationResult { get; private set; } = new();
     public IReadOnlyList<string> RecoveredTransactions { get; }
     public WorkspaceMigrationResult MigrationResult { get; }
+
+    /// <summary>
+    /// What the vanilla migration and first-run build reported when the game was opened. A build
+    /// that needed an answer leaves no backup and names its question here; deploys stay refused
+    /// until the rebuild runs (GR-V6, TX-20).
+    /// </summary>
+    public BaselineOutcome? OpenBaseline { get; private set; }
 
     public string ContentPath => _contentPath;
     public bool UsesWwwFolder => _usesWwwFolder;
@@ -53,7 +64,22 @@ public class ModEngine
     }
 
     public ModEngine(string gameExecutablePath, GameWorkspacePaths workspace, GameLayout layout, IFileSystemOps files)
+        : this(gameExecutablePath, workspace, layout, files, new NoStoreManifestSource(), TimeProvider.System)
     {
+    }
+
+    public ModEngine(
+        string gameExecutablePath,
+        GameWorkspacePaths workspace,
+        GameLayout layout,
+        IFileSystemOps files,
+        IStoreManifestSource storeSource,
+        TimeProvider clock)
+    {
+        _layout = layout;
+        _files = files;
+        _storeSource = storeSource;
+        _clock = clock;
         _gamePath = Path.GetDirectoryName(gameExecutablePath) ?? string.Empty;
         _usesWwwFolder = layout.UsesWww;
         _contentPath = layout.ContentRoot;
@@ -77,13 +103,35 @@ public class ModEngine
     // PHASE 1: SAFETY SYSTEMS (Time Capsule & Vanilla Backup)
     // ==================================================================================
 
-    public const string BackupMarkerFileName = VanillaStore.MarkerFileName;
+    /// <summary>The file whose presence means the vanilla backup is complete: <c>vanilla.manifest.json</c> since schema 4.</summary>
+    public string BackupMarkerPath => _vanilla.ManifestPath;
 
-    public string BackupMarkerPath => _vanilla.MarkerPath;
-
+    /// <summary>
+    /// Migrates a schema 3 backup (GR-V6), then runs the first-run build when no backup exists. A
+    /// build that needs the player's answer leaves the backup missing and records the question in
+    /// <see cref="OpenBaseline"/>. Throws <see cref="InvalidOperationException"/> when a runtime
+    /// loader has already patched the game, because then the folder is not vanilla.
+    /// </summary>
     public void InitializeSafeState()
     {
-        _vanilla.EnsureBackup();
+        OpenBaseline = new VanillaBaselineMigration(_workspace, _layout, _files, _storeSource, _clock).Run();
+        if (!_vanilla.IsComplete && OpenBaseline.Question == BaselineQuestion.None)
+        {
+            BaselineOutcome firstRun = new VanillaBaselineBuilder(_workspace, _layout, _files, _storeSource, _clock).Build(BaselineAnswers.None);
+            foreach (OperationDiagnostic diagnostic in OpenBaseline.Result.Diagnostics)
+            {
+                firstRun.Result.Add(diagnostic);
+            }
+
+            OpenBaseline = firstRun;
+        }
+
+        OperationDiagnostic? dirty = OpenBaseline.Result.Diagnostics.FirstOrDefault(item => item.Code == DiagnosticCodes.FhmmInstalledOutside);
+        if (dirty != null)
+        {
+            throw new InvalidOperationException(dirty.Message);
+        }
+
         JustCreatedSaveBackup = _saves.EnsureTimeCapsule();
     }
 
@@ -578,7 +626,9 @@ public class ModEngine
             string relativePath = Path.GetRelativePath(gameDir, gameFile);
             string backupFile = Path.Combine(backupDir, relativePath);
 
-            if (!File.Exists(backupFile))
+            // A 1.x library entry under `mods` is never restored or deleted (GR-V11).
+            if (!File.Exists(backupFile) &&
+                !ManagedContent.IsLegacyLibraryEntry(_contentPath, Path.Combine(folderName, relativePath)))
             {
                 File.Delete(gameFile);
             }
@@ -676,24 +726,7 @@ public class ModEngine
 
     private string NormalizeTargetPath(string targetPath)
     {
-        string normalized = targetPath.Replace('\\', '/');
-
-        if (_usesWwwFolder)
-        {
-            int wwwIndex = normalized.LastIndexOf("www/", StringComparison.OrdinalIgnoreCase);
-            if (wwwIndex >= 0)
-                return normalized.Substring(wwwIndex + 4);
-        }
-
-        string[] knownRoots = { "data/", "js/", "img/", "audio/", "fonts/", "css/", "icon/", "movies/", "effects/" };
-        foreach (var root in knownRoots)
-        {
-            int idx = normalized.IndexOf(root, StringComparison.OrdinalIgnoreCase);
-            if (idx >= 0)
-                return normalized.Substring(idx);
-        }
-
-        return targetPath;
+        return ModTargets.Normalize(targetPath, _usesWwwFolder);
     }
 
     private void AddUnresolvedNewFileCollisions(ModProfile profile, OperationResult result)

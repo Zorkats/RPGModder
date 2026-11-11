@@ -343,6 +343,9 @@ public partial class MainWindow
 
             EvaluateModLoaderEnvironment();
 
+            // A backup that cannot be proven stops deploys until the player chooses (GR-V6).
+            await ReviewBaselineAfterOpenAsync();
+
             // Detect and link Nexus game
             await DetectNexusGame();
             _ = RunBackgroundUpdateCheckAsync();

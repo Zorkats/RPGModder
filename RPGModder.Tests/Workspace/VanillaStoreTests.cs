@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using RPGModder.Core.Models;
 using RPGModder.Core.Platform;
 using RPGModder.Core.Workspace;
 using RPGModder.Tests.Support;
@@ -28,13 +29,14 @@ public sealed class VanillaStoreTests : IDisposable
     }
 
     [Fact]
-    public void EnsureBackup_CopiesManagedContent_AndListsItWithoutTheMarker()
+    public void Build_CopiesManagedContent_AndListsItWithoutTheMarker()
     {
         var store = new VanillaStore(_workspace, _layout, new FileSystemOps());
 
-        store.EnsureBackup();
+        Build(new FileSystemOps());
 
         Assert.True(store.IsComplete);
+        Assert.Equal(VanillaBaseline.Confirmed, store.ReadManifest()!.Baseline);
         Assert.Contains("data/System.json", store.Files);
         Assert.Contains("img/pictures/title.png", store.Files);
         Assert.Contains("index.html", store.Files);
@@ -50,7 +52,7 @@ public sealed class VanillaStoreTests : IDisposable
     [Fact]
     public void Discard_InterruptedAfterTheMarker_LeavesNoTrustedBackup()
     {
-        new VanillaStore(_workspace, _layout, new FileSystemOps()).EnsureBackup();
+        Build(new FileSystemOps());
         var faulty = new VanillaStore(_workspace, _layout, new FaultInjectingFileOps(failAt: 2));
 
         Assert.Throws<IOException>(() => faulty.Discard());
@@ -58,9 +60,8 @@ public sealed class VanillaStoreTests : IDisposable
         Assert.False(faulty.IsComplete);
         Assert.True(Directory.Exists(faulty.Root));
 
-        var store = new VanillaStore(_workspace, _layout, new FileSystemOps());
-        store.EnsureBackup();
-        Assert.True(store.IsComplete);
+        Build(new FileSystemOps());
+        Assert.True(new VanillaStore(_workspace, _layout, new FileSystemOps()).IsComplete);
     }
 
     [Fact]
@@ -69,5 +70,12 @@ public sealed class VanillaStoreTests : IDisposable
         var store = new VanillaStore(_workspace, _layout, new FileSystemOps());
 
         Assert.Throws<InvalidDataException>(() => store.PathOf("../outside.txt"));
+    }
+
+    private void Build(IFileSystemOps files)
+    {
+        BaselineOutcome outcome = new VanillaBaselineBuilder(_workspace, _layout, files, new NoStoreManifestSource(), TimeProvider.System)
+            .Build(BaselineAnswers.None);
+        Assert.True(outcome.Built);
     }
 }

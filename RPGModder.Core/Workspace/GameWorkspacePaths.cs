@@ -8,7 +8,11 @@ namespace RPGModder.Core.Workspace;
 /// </summary>
 public sealed class GameWorkspacePaths
 {
-    public const int CurrentSchemaVersion = 3;
+    /// <summary>Schema 4 replaces <c>backup_complete.marker</c> with <c>vanilla.manifest.json</c> (GR-V6).</summary>
+    public const int CurrentSchemaVersion = 4;
+
+    /// <summary>The version the 1.x layout import records; the vanilla migration then raises it to <see cref="CurrentSchemaVersion"/>.</summary>
+    public const int LegacyImportSchemaVersion = 3;
     public const string LegacyProfilePrefix = "mod_profile_";
 
     public string GameRoot { get; }
@@ -17,6 +21,10 @@ public sealed class GameWorkspacePaths
     public string Profiles { get; }
     public string Backups { get; }
     public string CleanBackup { get; }
+    public string VanillaManifest { get; }
+    public string VanillaStaging { get; }
+    public string VanillaRetired { get; }
+    public string LegacyBackupExtras { get; }
     public string SaveBackups { get; }
     public string ProfileSaves { get; }
     public string Transactions { get; }
@@ -42,6 +50,10 @@ public sealed class GameWorkspacePaths
         Profiles = Path.Combine(Root, "profiles");
         Backups = Path.Combine(Root, "backups");
         CleanBackup = Path.Combine(Backups, "vanilla");
+        VanillaManifest = Path.Combine(Backups, "vanilla.manifest.json");
+        VanillaStaging = Path.Combine(Backups, "vanilla.staging");
+        VanillaRetired = Path.Combine(Backups, "vanilla.retired");
+        LegacyBackupExtras = Path.Combine(Root, "legacy", "backup-extras");
         SaveBackups = Path.Combine(Backups, "saves");
         ProfileSaves = Path.Combine(Backups, "profile-saves");
         Transactions = Path.Combine(Root, "transactions");

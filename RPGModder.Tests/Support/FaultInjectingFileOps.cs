@@ -5,7 +5,8 @@ namespace RPGModder.Tests.Support;
 /// <summary>
 /// Runs every call on the real file system and throws <see cref="IOException"/> instead of the Nth
 /// destructive call, counting from 1 (TST-9). With no failure set it only counts, so a test can
-/// first measure how many calls a workflow makes and then fail each one in turn.
+/// first measure how many calls a workflow makes and then fail each one in turn. Reads are never
+/// counted or failed; their paths are recorded so a test can assert what was opened.
 /// </summary>
 public sealed class FaultInjectingFileOps : IFileSystemOps
 {
@@ -22,6 +23,9 @@ public sealed class FaultInjectingFileOps : IFileSystemOps
 
     /// <summary>The operation and path of the call that failed, or null while none has.</summary>
     public string? FailedCall { get; private set; }
+
+    /// <summary>Every path a read member was asked about, in order.</summary>
+    public List<string> ReadPaths { get; } = new();
 
     public void CopyFile(string source, string destination)
     {
@@ -69,6 +73,30 @@ public sealed class FaultInjectingFileOps : IFileSystemOps
     {
         Step(nameof(WriteAllTextAtomic), path);
         _inner.WriteAllTextAtomic(path, content);
+    }
+
+    public bool FileExists(string path)
+    {
+        ReadPaths.Add(path);
+        return _inner.FileExists(path);
+    }
+
+    public byte[] ReadAllBytes(string path)
+    {
+        ReadPaths.Add(path);
+        return _inner.ReadAllBytes(path);
+    }
+
+    public string ReadAllText(string path)
+    {
+        ReadPaths.Add(path);
+        return _inner.ReadAllText(path);
+    }
+
+    public IReadOnlyList<string> ListFiles(string folder, string pattern)
+    {
+        ReadPaths.Add(folder);
+        return _inner.ListFiles(folder, pattern);
     }
 
     private void Step(string operation, string path)

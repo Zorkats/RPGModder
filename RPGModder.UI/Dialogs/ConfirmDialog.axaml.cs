@@ -23,10 +23,15 @@ public partial class ConfirmDialog : Window
         InitializeComponent();
     }
 
-    public ConfirmDialog(string title, string message, string confirmLabel, string? alternateLabel = null)
+    public ConfirmDialog(string title, string message, string confirmLabel, string? alternateLabel = null, string? cancelLabel = null)
         : this()
     {
         TxtTitle.Text = title;
+        if (cancelLabel != null)
+        {
+            BtnCancel.Content = cancelLabel;
+        }
+
         TxtMessage.Text = message;
         BtnConfirm.Content = confirmLabel;
         BtnConfirm.Click += (_, _) => Close(ConfirmChoice.Confirm);

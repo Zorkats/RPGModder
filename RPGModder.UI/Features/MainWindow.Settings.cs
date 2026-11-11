@@ -74,25 +74,8 @@ public partial class MainWindow
             return;
         }
 
-        ConfirmChoice choice = await new ConfirmDialog(
-            "Recreate vanilla snapshot",
-            "RPGModder will first restore the existing vanilla snapshot, then create a new one from the restored game folder. Profiles and save backups are kept.",
-            "Recreate").AskAsync(this);
-        if (choice != ConfirmChoice.Confirm)
-        {
-            return;
-        }
-
-        SetStatus("Resetting vanilla backup...", true);
-        OperationResult result = await _vanillaBackup.ResetAsync(_gameSession);
-        await RefreshPendingChangesAsync();
-        if (!result.Success)
-        {
-            SetStatus($"Failed to reset backup: {FirstErrorMessage(result)}", false);
-            return;
-        }
-
-        SetStatus("Vanilla backup reset. The game folder holds vanilla until the next deploy.", true);
+        // The interactive rebuild (TX-20): it asks what the store's list cannot settle.
+        await StartBaselineRebuildAsync();
     }
 
     #endregion

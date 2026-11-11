@@ -14,10 +14,11 @@ public enum FileAction
 
 public static class FilePolicyService
 {
-    // The master list of directories RPGModder actively manages and protects
+    // The master list of directories RPGModder actively manages and protects. `_moddata` left the
+    // list in workspace schema 4 (GR-V6): a live folder of that name is left alone.
     public static readonly string[] ProtectedFolders = new[]
     {
-        "data", "js", "img", "audio", "fonts", "css", "icon", "movies", "effects", "mods", "_moddata"
+        "data", "js", "img", "audio", "fonts", "css", "icon", "movies", "effects", "mods"
     };
 
     public static readonly string[] ProtectedRootFiles = new[]

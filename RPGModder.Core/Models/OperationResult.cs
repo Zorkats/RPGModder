@@ -34,5 +34,10 @@ public sealed class OperationResult
     {
         Add(new OperationDiagnostic(code, message, DiagnosticSeverity.Warning, subject));
     }
+
+    public void AddInfo(string code, string message, string? subject = null)
+    {
+        Add(new OperationDiagnostic(code, message, DiagnosticSeverity.Info, subject));
+    }
 }
 

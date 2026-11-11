@@ -4,11 +4,12 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using RPGModder.Core.Platform;
 
 namespace RPGModder.Core.Services;
 
 // Service for detecting Steam installation and launching games through Steam
-public class SteamLaunchService
+public class SteamLaunchService : IStoreLinkOpener
 {
     // Known Steam AppIDs for RPG Maker games
     private static readonly Dictionary<string, int> KnownSteamAppIds = new(StringComparer.OrdinalIgnoreCase)
@@ -200,6 +201,52 @@ public class SteamLaunchService
         }
         catch
         {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Hands a <c>steam://</c> link to the Steam client by the same route as a launch: the
+    /// <c>steam</c> command or the Flatpak on Linux, the system's link handler elsewhere.
+    /// </summary>
+    public bool Open(string link)
+    {
+        if (!link.StartsWith("steam://", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (OperatingSystem.IsLinux())
+            {
+                string? steam = PlatformService.FindExecutable("steam");
+                if (steam != null)
+                {
+                    Process.Start(CreateStartInfo(steam, [link]));
+                    return true;
+                }
+
+                string? flatpak = PlatformService.FindExecutable("flatpak");
+                if (flatpak != null)
+                {
+                    Process.Start(CreateStartInfo(flatpak, ["run", "com.valvesoftware.Steam", link]));
+                    return true;
+                }
+
+                return false;
+            }
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = link,
+                UseShellExecute = true
+            });
+            return true;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            Trace.TraceWarning($"The Steam link could not be opened: {link}: {ex.Message}");
             return false;
         }
     }
