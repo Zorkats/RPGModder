@@ -696,56 +696,43 @@ public partial class MainWindow
             if (filePath != null && File.Exists(filePath))
             {
                 // Auto-install if a game is loaded
-                if (_engine != null)
+                if (_gameSession != null)
                 {
-                    // Check if we already have this mod installed (by Nexus ID)
+                    // An installed mod with the same Nexus id is updated in place.
                     var existingMod = _allMods.FirstOrDefault(m => m.Manifest.Metadata.NexusId == mod.ModId);
+                    string statusMsg = existingMod != null
+                        ? $"Updating {mod.Name} (v{mod.Version})"
+                        : $"Installing {mod.Name} (v{mod.Version})";
+                    SetStatus($"{statusMsg}...", true);
 
-                    string statusMsg;
-                    InstallResult result;
-        string modsDir = RequireWorkspace().Mods;
-                    Directory.CreateDirectory(modsDir);
+                    InstallOutcome outcome = await _modLibrary.InstallFromNexusAsync(
+                        _gameSession, filePath, mod.ModId, mod.Version, existingMod?.FolderName);
 
-                    if (existingMod != null)
+                    if (outcome.Result.Success && outcome.FolderName != null)
                     {
-                        // UPDATE existing mod
-                        statusMsg = $"Updating {mod.Name} (v{mod.Version})...";
-                        SetStatus(statusMsg, true);
-
-                        result = await System.Threading.Tasks.Task.Run(() =>
-                            _installer.InstallModWithNexusInfo(
-                                filePath, modsDir, mod.ModId, mod.Version, existingMod.FolderName));
+                        AddInstalledModToProfile(outcome.FolderName);
+                        SetStatus($"{statusMsg} complete.", true);
+                    }
+                    else if (WasRefused(outcome.Result))
+                    {
+                        // Nothing ran, so the download stays for another try.
+                        SetStatus($"Cannot install now: {FirstErrorMessage(outcome.Result)} The download is kept at {filePath}.", false);
+                        return;
                     }
                     else
                     {
-                        // NEW INSTALL
-                        statusMsg = $"Installing {mod.Name} (v{mod.Version})...";
-                        SetStatus(statusMsg, true);
-
-                        result = await System.Threading.Tasks.Task.Run(() =>
-                            _installer.InstallModWithNexusInfo(
-                                filePath, modsDir, mod.ModId, mod.Version));
+                        SetStatus($"Installation failed: {FirstErrorMessage(outcome.Result)}", false);
                     }
 
-                    if (result.Success && result.FolderName != null)
+                    // The archive in TempDownloads is not needed once the install ran.
+                    try
                     {
-                        if (!_profile.EnabledMods.Contains(result.FolderName))
-                        {
-                            _profile.EnabledMods.Add(result.FolderName);
-                            SaveProfile();
-                        }
-
-                        RefreshModList();
-                        MarkPendingChanges();
-            SetStatus($"{statusMsg.Replace("...", "")} complete.", true);
+                        File.Delete(filePath);
                     }
-                    else
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                     {
-                        SetStatus($"Installation failed: {result.Error}", false);
+                        Trace.TraceWarning($"A downloaded archive could not be deleted: {ex.Message}");
                     }
-
-                    // Instantly delete the ZIP file from the TempDownloads folder after processing
-                    try { File.Delete(filePath); } catch { /* Ignore file-in-use locks */ }
                 }
                 else
                 {

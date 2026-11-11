@@ -10,10 +10,14 @@ public interface IProfileRepository
     ModProfile Load(GameWorkspacePaths workspace, string profileName);
     void Save(GameWorkspacePaths workspace, string profileName, ModProfile profile);
     void Delete(GameWorkspacePaths workspace, string profileName);
+    string ReadActive(GameWorkspacePaths workspace);
+    void WriteActive(GameWorkspacePaths workspace, string profileName);
 }
 
 public sealed class ProfileRepository : IProfileRepository
 {
+    public const string DefaultProfileName = "Default";
+
     public IReadOnlyList<string> List(GameWorkspacePaths workspace)
     {
         workspace.EnsureCreated();
@@ -62,5 +66,31 @@ public sealed class ProfileRepository : IProfileRepository
         {
             File.Delete(path);
         }
+    }
+
+    public string ReadActive(GameWorkspacePaths workspace)
+    {
+        string markerPath = workspace.ActiveProfileMarker;
+        if (!File.Exists(markerPath))
+        {
+            return DefaultProfileName;
+        }
+
+        try
+        {
+            return SafePathService.ValidateDirectoryName(File.ReadAllText(markerPath).Trim(), "Active profile marker");
+        }
+        catch (InvalidDataException)
+        {
+            // A marker that does not name a valid profile cannot select one; Default is the profile
+            // every workspace has.
+            return DefaultProfileName;
+        }
+    }
+
+    public void WriteActive(GameWorkspacePaths workspace, string profileName)
+    {
+        string name = SafePathService.ValidateDirectoryName(profileName, "Profile name");
+        FileTreeService.WriteAllTextAtomic(workspace.ActiveProfileMarker, name);
     }
 }

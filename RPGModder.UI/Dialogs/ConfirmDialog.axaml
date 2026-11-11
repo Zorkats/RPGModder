@@ -1,0 +1,21 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="RPGModder.UI.Dialogs.ConfirmDialog"
+        Title="Confirm" Width="440" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" CanResize="False"
+        SystemDecorations="BorderOnly" Background="#1E1E1E" ExtendClientAreaToDecorationsHint="True">
+
+    <Border BorderBrush="{StaticResource SeparatorBrush}" BorderThickness="1">
+        <StackPanel Margin="24" Spacing="24">
+            <TextBlock Name="TxtTitle" FontWeight="ExtraBold" FontSize="18" Foreground="{StaticResource TextMainBrush}"/>
+            <TextBlock Name="TxtMessage" TextWrapping="Wrap" Foreground="{StaticResource TextMutedBrush}" FontSize="14" LineHeight="20"/>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+                <Button Name="BtnAlternate" IsVisible="False" Padding="20,10"/>
+                <Button Name="BtnConfirm" Classes="danger" Padding="20,10"/>
+                <Button Name="BtnCancel" Content="Cancel" Classes="primary" Padding="24,10" FontWeight="Bold"
+                        IsDefault="True" IsCancel="True"/>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>

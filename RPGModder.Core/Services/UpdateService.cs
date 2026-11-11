@@ -62,8 +62,26 @@ public class UpdateService : IDisposable
                 };
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            // An update check that fails only means no update is offered this time.
+            Trace.TraceWarning($"The update check failed: {ex.Message}");
+        }
+
         return null;
+    }
+
+    // Leftover download files are only clutter in the temp folder, so a failure is logged and the update goes on.
+    private static void TryCleanUp(Action delete, string path)
+    {
+        try
+        {
+            delete();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Trace.TraceWarning($"An update download file could not be removed: {path}: {ex.Message}");
+        }
     }
 
     public async Task DownloadAndInstallAsync(string url, IProgress<double> progress)
@@ -134,8 +152,8 @@ public class UpdateService : IDisposable
         if (Directory.Exists(updateStaging)) Directory.Delete(updateStaging, true);
         CopyDirectory(contentRoot, updateStaging);
 
-        try { File.Delete(tempFile); } catch { }
-        try { Directory.Delete(extractFolder, true); } catch { }
+        TryCleanUp(() => File.Delete(tempFile), tempFile);
+        TryCleanUp(() => Directory.Delete(extractFolder, true), extractFolder);
 
         if (OperatingSystem.IsLinux())
         {
@@ -236,7 +254,7 @@ public class UpdateService : IDisposable
         return $"""
             @echo off
             echo Waiting for RPGModder to close...
-            timeout /t 2 /nobreak >nul
+            "%SystemRoot%\System32\timeout.exe" /t 2 /nobreak >nul
 
             echo Creating rollback backup...
             mkdir "{backup}" >nul 2>&1

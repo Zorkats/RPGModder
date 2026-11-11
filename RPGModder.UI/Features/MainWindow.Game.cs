@@ -289,6 +289,7 @@ public partial class MainWindow
             SetStatus("Initializing Safe State...", true);
 
             _gameSession = await _gameSessions.OpenAsync(exePath);
+            _gameSession.Gate.Changed += Gate_Changed;
             _engine = _gameSession.Engine;
             _workspacePaths = _gameSession.Workspace;
 
@@ -316,8 +317,8 @@ public partial class MainWindow
                 ).ShowDialog(this);
             }
 
-            // --- FIX: READ ACTUAL ACTIVE PROFILE STATE ---
-            string actualActiveProfile = GetActiveProfileMarker();
+            // The live saves belong to the profile the marker names.
+            string actualActiveProfile = _profiles.ReadActive(_gameSession.Workspace);
             _currentProfileName = actualActiveProfile;
 
             // Load the JSON data for the profile currently sitting in the live directory
@@ -359,8 +360,14 @@ public partial class MainWindow
         _gameRoot = "";
         _gameExePath = "";
         _workspacePaths = null;
+        if (_gameSession != null)
+        {
+            _gameSession.Gate.Changed -= Gate_Changed;
+        }
+
         _gameSession = null;
         _hasPendingChanges = false;
+        _pendingRefreshVersion++;
 
         // Cancel any in-flight Nexus operations
         _nexusCts?.Cancel();
@@ -399,6 +406,29 @@ public partial class MainWindow
 
         _updateCheckCts?.Cancel();
         UpdateModCounts();
+    }
+
+    // The gate raises Changed on the thread that entered or left it.
+    private void Gate_Changed(object? sender, EventArgs e)
+    {
+        Dispatcher.UIThread.Post(UpdateBusyState);
+    }
+
+    /// <summary>
+    /// Mirrors the gate onto the commands that start a mutating workflow (CON-4). Core refuses a
+    /// second operation anyway; this only keeps the player from asking for one.
+    /// </summary>
+    private void UpdateBusyState()
+    {
+        bool loaded = _gameSession != null;
+        bool idle = !(_gameSession?.Gate.IsBusy ?? false);
+        BtnRebuild.IsEnabled = loaded && idle;
+        BtnInstallMod.IsEnabled = loaded && idle;
+        BtnLaunchGame.IsEnabled = loaded && idle;
+        BtnAddProfile.IsEnabled = idle;
+        BtnRemoveProfile.IsEnabled = idle;
+        CboProfiles.IsEnabled = idle;
+        BtnResetBackup.IsEnabled = idle;
     }
 
     #endregion

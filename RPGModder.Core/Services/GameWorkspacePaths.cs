@@ -16,6 +16,9 @@ public sealed class GameWorkspacePaths
     public string History { get; }
     public string ActiveProfileMarker { get; }
     public string SchemaMarker { get; }
+    public string OperationLock { get; }
+    public string Trash { get; }
+    public string DeployedState { get; }
 
     public GameWorkspacePaths(string gameRoot)
     {
@@ -31,6 +34,9 @@ public sealed class GameWorkspacePaths
         History = Path.Combine(Root, "history");
         ActiveProfileMarker = Path.Combine(Profiles, "active-profile.txt");
         SchemaMarker = Path.Combine(Root, "workspace.json");
+        OperationLock = Path.Combine(Root, "operation.lock");
+        Trash = Path.Combine(Root, "trash");
+        DeployedState = Path.Combine(Root, "deployed.json");
     }
 
     public void EnsureCreated()

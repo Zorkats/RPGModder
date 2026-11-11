@@ -1,5 +1,6 @@
 using Newtonsoft.Json;
 using RPGModder.Core.Models;
+using RPGModder.Core.Operations;
 using RPGModder.Core.Services;
 
 namespace RPGModder.Core.Application;
@@ -40,7 +41,7 @@ public sealed class ModCatalogService : IModCatalogService
             if (!File.Exists(manifestPath))
             {
                 diagnostics.Add(new OperationDiagnostic(
-                    "manifest.missing",
+                    DiagnosticCodes.ManifestMissing,
                     "The mod folder does not contain mod.json.",
                     DiagnosticSeverity.Warning,
                     folderName));
@@ -58,7 +59,7 @@ public sealed class ModCatalogService : IModCatalogService
             catch (Exception ex)
             {
                 diagnostics.Add(new OperationDiagnostic(
-                    "manifest.invalid",
+                    DiagnosticCodes.ManifestInvalid,
                     ex.Message,
                     DiagnosticSeverity.Error,
                     folderName));

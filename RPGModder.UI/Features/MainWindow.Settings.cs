@@ -68,58 +68,31 @@ public partial class MainWindow
 
     private async void BtnResetBackup_Click(object? sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrEmpty(_gameRoot))
+        if (_gameSession == null)
         {
             SetStatus("No game loaded.", false);
             return;
         }
 
-        string backupPath = RequireWorkspace().CleanBackup;
-        if (!Directory.Exists(backupPath))
+        ConfirmChoice choice = await new ConfirmDialog(
+            "Recreate vanilla snapshot",
+            "RPGModder will first restore the existing vanilla snapshot, then create a new one from the restored game folder. Profiles and save backups are kept.",
+            "Recreate").AskAsync(this);
+        if (choice != ConfirmChoice.Confirm)
         {
-            SetStatus("No backup exists to reset.", false);
             return;
         }
 
-        try
+        SetStatus("Resetting vanilla backup...", true);
+        OperationResult result = await _vanillaBackup.ResetAsync(_gameSession);
+        await RefreshPendingChangesAsync();
+        if (!result.Success)
         {
-            var confirmation = new RPGModder.UI.Dialogs.MessageBox(
-                "Recreate vanilla snapshot",
-                "RPGModder will first restore the existing vanilla snapshot, then create a new one. Profiles and save backups are preserved. Continue?",
-                true);
-            if (!await confirmation.ShowDialog<bool>(this))
-            {
-                return;
-            }
-
-            SetStatus("Resetting vanilla backup...", true);
-            if (_engine != null)
-            {
-                OperationResult restoreResult = await System.Threading.Tasks.Task.Run(() =>
-                    _engine.RebuildGame(new ModProfile()));
-                if (!restoreResult.Success)
-                {
-                    SetStatus("Could not restore vanilla state. The existing snapshot was preserved.", false);
-                    return;
-                }
-            }
-
-            await System.Threading.Tasks.Task.Run(() => Directory.Delete(backupPath, true));
-
-            // Re-initialize
-            if (_engine != null)
-            {
-                _gameSession = await _gameSessions.OpenAsync(_gameExePath);
-                _engine = _gameSession.Engine;
-                _workspacePaths = _gameSession.Workspace;
-            }
-
-            SetStatus("Vanilla backup reset. A fresh backup will be created.", true);
+            SetStatus($"Failed to reset backup: {FirstErrorMessage(result)}", false);
+            return;
         }
-        catch (Exception ex)
-        {
-            SetStatus($"Failed to reset backup: {ex.Message}", false);
-        }
+
+        SetStatus("Vanilla backup reset. The game folder holds vanilla until the next deploy.", true);
     }
 
     #endregion

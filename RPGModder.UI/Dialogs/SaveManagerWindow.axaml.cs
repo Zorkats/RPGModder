@@ -5,7 +5,8 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using RPGModder.Core.Services;
+using RPGModder.Core.Application;
+using RPGModder.Core.Models;
 
 namespace RPGModder.UI.Dialogs;
 
@@ -13,6 +14,8 @@ public partial class SaveManagerWindow : Window
 {
     private string _saveFolder = string.Empty;
     private string _backupFolder = string.Empty;
+    private readonly GameSession? _session;
+    private readonly SaveBackupWorkflow? _saveBackups;
     public ObservableCollection<SaveFileItem> Saves { get; set; } = new();
 
     public SaveManagerWindow()
@@ -21,17 +24,18 @@ public partial class SaveManagerWindow : Window
         LstSaves.ItemsSource = Saves;
     }
 
-    public SaveManagerWindow(string gameRoot, bool isWww) : this()
+    public SaveManagerWindow(GameSession session, SaveBackupWorkflow saveBackups) : this()
     {
-        // 1. Locate Saves (Standard vs Root)
-        string potentialPath = Path.Combine(gameRoot, isWww ? "www" : "", "save");
+        _session = session;
+        _saveBackups = saveBackups;
+
+        // Saves live in (www/)save, or next to the executable for games that keep them there.
+        string potentialPath = Path.Combine(session.GameRoot, session.Engine.UsesWwwFolder ? "www" : "", "save");
         if (!Directory.Exists(potentialPath))
-            potentialPath = gameRoot;
+            potentialPath = session.GameRoot;
 
         _saveFolder = potentialPath;
-        _backupFolder = new GameWorkspacePaths(gameRoot).SaveBackups;
-
-        if (!Directory.Exists(_backupFolder)) Directory.CreateDirectory(_backupFolder);
+        _backupFolder = session.Workspace.SaveBackups;
 
         TxtPath.Text = $"Save Location: {_saveFolder}";
         LstSaves.ItemsSource = Saves;
@@ -61,18 +65,18 @@ public partial class SaveManagerWindow : Window
         }
     }
 
-    private void BtnBackup_Click(object? sender, RoutedEventArgs e)
+    private async void BtnBackup_Click(object? sender, RoutedEventArgs e)
     {
-        var btn = sender as Button;
-        var item = btn?.Tag as SaveFileItem;
+        if ((sender as Button)?.Tag is not SaveFileItem item || _session == null || _saveBackups == null) return;
 
-        if (item == null) return; // Guard clause
+        OperationResult result = await _saveBackups.BackupAsync(_session, item.FullPath);
+        await new MessageBox(result.Success ? "Success" : "Backup failed", result.Success ? "Backup created!" : FirstError(result))
+            .ShowDialog(this);
+    }
 
-        // Now we safely use 'item'
-        string dest = Path.Combine(_backupFolder, $"{item.FileName}_{DateTime.Now:MMdd_HHmm}.bak");
-        File.Copy(item.FullPath, dest, true);
-
-        new MessageBox("Success", "Backup created!").ShowDialog(this);
+    private static string FirstError(OperationResult result)
+    {
+        return result.Diagnostics.FirstOrDefault(item => item.Severity == DiagnosticSeverity.Error)?.Message ?? "Unknown error.";
     }
 
     private async void BtnRestore_Click(object? sender, RoutedEventArgs e)
@@ -84,7 +88,11 @@ public partial class SaveManagerWindow : Window
         if (item == null) return; // Guard clause
 
         // 1. Find backups
-        var backups = Directory.GetFiles(_backupFolder, $"{item.FileName}_*.bak")
+        if (_session == null || _saveBackups == null) return;
+
+        var backups = (Directory.Exists(_backupFolder)
+                ? Directory.GetFiles(_backupFolder, $"{item.FileName}_*.bak")
+                : Array.Empty<string>())
             .Select(f => new FileInfo(f))
             .OrderByDescending(f => f.LastWriteTime)
             .ToList();
@@ -97,40 +105,41 @@ public partial class SaveManagerWindow : Window
 
         var latest = backups.First();
 
-        var confirm = new MessageBox("Restore Backup",
+        ConfirmChoice choice = await new ConfirmDialog(
+            "Restore Backup",
             $"Found {backups.Count} backup(s).\n\n" +
             $"Restoring LATEST backup:\n" +
-            $"📅 {latest.LastWriteTime}\n" +
-            $"📄 {latest.Name}\n\n" +
-            "Current save will be overwritten. Continue?",
-            true);
-
-        var result = await confirm.ShowDialog<bool>(this);
-
-        if (result)
+            $"{latest.LastWriteTime}\n" +
+            $"{latest.Name}\n\n" +
+            $"{item.FileName} will be overwritten. A safety copy of it is kept.",
+            "Restore").AskAsync(this);
+        if (choice != ConfirmChoice.Confirm)
         {
-            try
-            {
-                // Safety Backup
-                string safetyPath = Path.Combine(_backupFolder, $"{item.FileName}_PRE_RESTORE_{DateTime.Now:MMdd_HHmm}.bak");
-                File.Copy(item.FullPath, safetyPath, true);
-
-                // Restore
-                File.Copy(latest.FullName, item.FullPath, true);
-
-                RefreshList();
-                await new MessageBox("Success", "Restored! (Safety backup created)").ShowDialog(this);
-            }
-            catch (Exception ex)
-            {
-                await new MessageBox("Error", $"Failed: {ex.Message}").ShowDialog(this);
-            }
+            return;
         }
+
+        OperationResult result = await _saveBackups.RestoreAsync(_session, item.FullPath, latest.FullName);
+        if (!result.Success)
+        {
+            await new MessageBox("Error", $"Failed: {FirstError(result)}").ShowDialog(this);
+            return;
+        }
+
+        RefreshList();
+        await new MessageBox("Success", "Restored! (Safety backup created)").ShowDialog(this);
     }
 
     private void BtnOpenFolder_Click(object? sender, RoutedEventArgs e)
     {
-        try { Process.Start(new ProcessStartInfo { FileName = _saveFolder, UseShellExecute = true }); } catch { }
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = _saveFolder, UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            Trace.TraceWarning($"The save folder could not be opened: {ex.Message}");
+            TxtPath.Text = $"Could not open the save folder: {ex.Message}";
+        }
     }
 
     private void BtnClose_Click(object? sender, RoutedEventArgs e) => Close();

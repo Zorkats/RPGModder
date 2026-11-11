@@ -8,6 +8,7 @@ using Avalonia.Threading;
 using Newtonsoft.Json;
 using RPGModder.Core.Application;
 using RPGModder.Core.Models;
+using RPGModder.Core.Operations;
 using RPGModder.Core.Services;
 using RPGModder.UI.Dialogs;
 using System;
@@ -90,34 +91,21 @@ public partial class MainWindow
 
     private async System.Threading.Tasks.Task InstallModFromPath(string path)
     {
-        if (_engine == null) return;
-
-        string modsDir = RequireWorkspace().Mods;
-        Directory.CreateDirectory(modsDir);
+        if (_gameSession == null) return;
 
         SetStatus($"Installing: {Path.GetFileName(path)}...", true);
 
         try
         {
-            var result = await System.Threading.Tasks.Task.Run(() =>
-                _installer.InstallMod(path, modsDir));
-
-            if (result.Success && result.FolderName != null)
+            InstallOutcome outcome = await _modLibrary.InstallAsync(_gameSession, path);
+            if (outcome.Result.Success && outcome.FolderName != null)
             {
-                _modCatalog.Invalidate();
-                if (!_profile.EnabledMods.Contains(result.FolderName))
-                {
-                    _profile.EnabledMods.Add(result.FolderName);
-                    SaveProfile();
-                }
-
-                RefreshModList();
-                MarkPendingChanges();
-                SetStatus($"Installed {result.Manifest?.Metadata.Name ?? result.FolderName}. Deploy changes to activate it.", true);
+                AddInstalledModToProfile(outcome.FolderName);
+                SetStatus($"Installed {outcome.Manifest?.Metadata.Name ?? outcome.FolderName}. Deploy changes to activate it.", true);
             }
             else
             {
-                SetStatus($"Install failed: {result.Error}", false);
+                SetStatus($"Install failed: {FirstErrorMessage(outcome.Result)}", false);
             }
         }
         catch (Exception ex)
@@ -160,6 +148,7 @@ public partial class MainWindow
 
         // Apply current search filter
         ApplySearchFilter();
+        MarkPendingChanges();
     }
 
     private void ModItem_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -181,17 +170,80 @@ public partial class MainWindow
         TxtActiveMods.Text = active.ToString();
     }
 
-    private void MarkPendingChanges()
+    private void AddInstalledModToProfile(string folderName)
     {
-        _hasPendingChanges = true;
-        PendingChangesIndicator.IsVisible = true;
-        SetStatus("You have unsaved changes. Click 'Apply Changes' to rebuild.", true);
+        _modCatalog.Invalidate();
+        if (!_profile.EnabledMods.Contains(folderName))
+        {
+            _profile.EnabledMods.Add(folderName);
+            SaveProfile();
+        }
+
+        RefreshModList();
     }
 
-    private void ClearPendingChanges()
+    private static string FirstErrorMessage(OperationResult result)
     {
-        _hasPendingChanges = false;
-        PendingChangesIndicator.IsVisible = false;
+        OperationDiagnostic? error = result.Diagnostics.FirstOrDefault(item => item.Severity == DiagnosticSeverity.Error);
+        return error?.Message ?? "Unknown error.";
+    }
+
+    // Refusals from the gate or the running game are not failures of the action itself.
+    private static bool WasRefused(OperationResult result)
+    {
+        return result.Diagnostics.Any(item =>
+            item.Code == DiagnosticCodes.OperationBusy || item.Code == DiagnosticCodes.GameRunning);
+    }
+
+    /// <summary>
+    /// The list is the profile being edited: enabled mods in list order, and the full load order.
+    /// </summary>
+    private void SyncProfileFromList()
+    {
+        _profile.EnabledMods = _allMods.Where(m => m.IsEnabled).Select(m => m.FolderName).ToList();
+        _profile.LoadOrder = _allMods.Select(m => m.FolderName).ToList();
+    }
+
+    private void MarkPendingChanges()
+    {
+        _ = RefreshPendingChangesAsync();
+    }
+
+    /// <summary>
+    /// Asks Core whether the game folder holds the profile as edited (UI-14). The UI never decides
+    /// this itself; it only shows the answer of the latest request.
+    /// </summary>
+    private async Task RefreshPendingChangesAsync()
+    {
+        int version = ++_pendingRefreshVersion;
+        if (_gameSession == null)
+        {
+            ShowPendingChanges(false);
+            return;
+        }
+
+        SyncProfileFromList();
+        bool pending;
+        try
+        {
+            pending = await _gameSessions.HasPendingChangesAsync(_gameSession, _currentProfileName, _profile);
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceWarning($"The pending state could not be computed: {ex.Message}");
+            pending = true;
+        }
+
+        if (version == _pendingRefreshVersion)
+        {
+            ShowPendingChanges(pending);
+        }
+    }
+
+    private void ShowPendingChanges(bool pending)
+    {
+        _hasPendingChanges = pending;
+        PendingChangesIndicator.IsVisible = pending;
     }
 
     #endregion
@@ -201,45 +253,44 @@ public partial class MainWindow
 
     private async void BtnRebuild_Click(object? sender, RoutedEventArgs e)
     {
-        if (_engine == null) return;
+        await DeployProfileAsync();
+    }
 
-        string gameProcessName = Path.GetFileNameWithoutExtension(_gameExePath);
-        if (Process.GetProcessesByName(gameProcessName).Any())
-        {
-            SetStatus("Cannot deploy while the game is running. Close it first.", false);
-            return;
-        }
+    /// <summary>
+    /// Saves the edited profile and deploys it. Core refuses while the game runs or another operation
+    /// holds the gate. Returns whether the game folder now holds the profile.
+    /// </summary>
+    private async Task<bool> DeployProfileAsync()
+    {
+        if (_engine == null || _gameSession == null) return false;
 
         SetStatus("Rebuilding game...", true);
         BtnRebuild.IsEnabled = false;
 
         try
         {
-            _profile.EnabledMods.Clear();
-            foreach (var mod in _allMods.Where(m => m.IsEnabled))
-                _profile.EnabledMods.Add(mod.FolderName);
+            SyncProfileFromList();
             SaveProfile();
 
-            // Apply smart merge setting, hardcore, and symlinks.
             _engine.UseMerging = ChkSmartMerge.IsChecked ?? true;
             _engine.UseHardcoreMerging = ChkHardcoreMerge.IsChecked ?? false;
-            _engine.UseSymlinks = ChkUseSymlinks.IsChecked ?? false;
 
-            if (_gameSession == null)
+            OperationResult result = await _gameSessions.DeployAsync(_gameSession, _currentProfileName, _profile);
+
+            if (WasRefused(result))
             {
-                throw new InvalidOperationException("No game session is active.");
+                SetStatus($"Cannot deploy: {FirstErrorMessage(result)}", false);
+                return false;
             }
-
-            OperationResult result = await _gameSessions.DeployAsync(_gameSession, _profile);
 
             if (!result.Success)
             {
                 string details = string.Join("\n", result.Diagnostics
                     .Where(item => item.Severity == DiagnosticSeverity.Error)
                     .Select(item => $"{item.Subject ?? "Deployment"}: {item.Message}"));
-                SetStatus("Rebuild failed and the previous game state was restored.", false);
+                SetStatus("Deploy failed. The game folder was not changed or was restored.", false);
                 await new RPGModder.UI.Dialogs.MessageBox("Deployment failed", details).ShowDialog(this);
-                return;
+                return false;
             }
 
             EvaluateModLoaderEnvironment();
@@ -262,21 +313,34 @@ public partial class MainWindow
                 }
             }
 
-            ClearPendingChanges();
+            OperationDiagnostic? warning = result.Diagnostics.FirstOrDefault(item => item.Severity == DiagnosticSeverity.Warning);
+            if (warning != null)
+            {
+                statusMsg += $" Warning: {warning.Message}";
+            }
+
+            await RefreshPendingChangesAsync();
             RefreshDeploymentHistory();
-            SetStatus(statusMsg, true);
+            SetStatus(statusMsg, warning == null);
+            return true;
         }
         catch (Exception ex)
         {
             SetStatus($"Rebuild failed: {ex.Message}", false);
+            return false;
         }
         finally
         {
-            BtnRebuild.IsEnabled = true;
+            BtnRebuild.IsEnabled = _gameSession != null && !_gameSession.Gate.IsBusy;
         }
     }
 
-    private void BtnLaunchGame_Click(object? sender, RoutedEventArgs e)
+    private async void BtnLaunchGame_Click(object? sender, RoutedEventArgs e)
+    {
+        await LaunchGameAsync();
+    }
+
+    private async Task LaunchGameAsync()
     {
         if (string.IsNullOrEmpty(_gameExePath) || !File.Exists(_gameExePath))
         {
@@ -284,10 +348,23 @@ public partial class MainWindow
             return;
         }
 
+        await RefreshPendingChangesAsync();
         if (_hasPendingChanges)
         {
-            SetStatus("Cannot launch: You have pending changes! Click 'Apply Changes' (Rebuild) first.", false);
-            return;
+            ConfirmChoice choice = await new ConfirmDialog(
+                "Changes not deployed",
+                $"The game folder does not hold the mods of profile '{_currentProfileName}' as they are set here. Deploy them before playing?",
+                "Launch anyway",
+                "Deploy and launch").AskAsync(this);
+            if (choice == ConfirmChoice.Cancel)
+            {
+                return;
+            }
+
+            if (choice == ConfirmChoice.Alternate && !await DeployProfileAsync())
+            {
+                return;
+            }
         }
 
         try
@@ -846,30 +923,48 @@ public partial class MainWindow
 
     private async System.Threading.Tasks.Task RemoveModAsync(ModListItem modItem)
     {
-        string modPath = SafePathService.ResolveContainedPath(RequireWorkspace().Mods, modItem.FolderName, "Mod folder");
+        if (_gameSession == null) return;
 
-        try
+        ConfirmChoice choice = await new ConfirmDialog(
+            "Remove mod",
+            $"Remove '{modItem.Name}'? Its folder is deleted from the mod library and it is taken out of every profile. The game folder changes on the next deploy.",
+            "Remove").AskAsync(this);
+        if (choice != ConfirmChoice.Confirm)
         {
-            _profile.EnabledMods.Remove(modItem.FolderName);
-            SaveProfile();
+            return;
+        }
 
-            if (Directory.Exists(modPath))
-                await System.Threading.Tasks.Task.Run(() => Directory.Delete(modPath, true));
+        OperationResult result = await _modLibrary.RemoveAsync(_gameSession, modItem.FolderName);
+        if (WasRefused(result))
+        {
+            SetStatus($"Cannot remove: {FirstErrorMessage(result)}", false);
+            return;
+        }
 
+        if (!result.Success)
+        {
+            // The folder may already sit in the trash, so the list is read again from disk.
             _modCatalog.Invalidate();
-
-            modItem.PropertyChanged -= ModItem_PropertyChanged;
-            _allMods.Remove(modItem);
-            InstalledMods.Remove(modItem);
-
-            UpdateModCounts();
-            MarkPendingChanges();
-            SetStatus($"Removed: {modItem.Name}", true);
+            RefreshModList();
+            OperationDiagnostic error = result.Diagnostics.First(item => item.Severity == DiagnosticSeverity.Error);
+            SetStatus($"Failed to remove {modItem.Name}.", false);
+            await new RPGModder.UI.Dialogs.MessageBox("Remove failed", $"{error.Message}\n\n{error.Subject}").ShowDialog(this);
+            return;
         }
-        catch (Exception ex)
-        {
-            SetStatus($"Failed to remove: {ex.Message}", false);
-        }
+
+        // Core already took the mod out of every saved profile, this one included.
+        _profile.EnabledMods.RemoveAll(name => name.Equals(modItem.FolderName, StringComparison.OrdinalIgnoreCase));
+        _profile.LoadOrder.RemoveAll(name => name.Equals(modItem.FolderName, StringComparison.OrdinalIgnoreCase));
+        _modCatalog.Invalidate();
+
+        modItem.PropertyChanged -= ModItem_PropertyChanged;
+        _allMods.Remove(modItem);
+        InstalledMods.Remove(modItem);
+
+        UpdateModCounts();
+        MarkPendingChanges();
+        OperationDiagnostic? warning = result.Diagnostics.FirstOrDefault(item => item.Severity == DiagnosticSeverity.Warning);
+        SetStatus(warning == null ? $"Removed: {modItem.Name}" : $"Removed: {modItem.Name}. {warning.Message}", warning == null);
     }
 
     #endregion

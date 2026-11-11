@@ -28,47 +28,16 @@ public partial class MainWindow
 {
 #region Mod Profiles
 
-    // --- State Persistence Helpers ---
-    private string GetActiveProfileMarker()
-    {
-        if (string.IsNullOrEmpty(_gameRoot)) return "Default";
-        string markerPath = RequireWorkspace().ActiveProfileMarker;
-        if (File.Exists(markerPath))
-        {
-            try
-            {
-                return SafePathService.ValidateDirectoryName(
-                    File.ReadAllText(markerPath).Trim(),
-                    "Active profile marker");
-            }
-            catch (InvalidDataException)
-            {
-                return "Default";
-            }
-        }
-        return "Default";
-    }
-
-    private void SetActiveProfileMarker(string profileName)
-    {
-        if (string.IsNullOrEmpty(_gameRoot)) return;
-        profileName = SafePathService.ValidateDirectoryName(profileName, "Profile name");
-        string markerPath = RequireWorkspace().ActiveProfileMarker;
-        FileTreeService.WriteAllTextAtomic(markerPath, profileName);
-    }
-
     // --- Core Data Methods ---
     private void LoadProfileDataOnly(string profileName)
     {
-        string path = RequireWorkspace().GetProfilePath(profileName);
-
-        if (File.Exists(path))
+        try
         {
-            try { _profile = _profiles.Load(RequireWorkspace(), profileName); }
-            catch { _profile = new ModProfile(); }
+            _profile = _profiles.Load(RequireWorkspace(), profileName);
         }
-        else
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
+            Trace.TraceWarning($"Profile '{profileName}' could not be read and starts empty: {ex.Message}");
             _profile = new ModProfile();
         }
     }
@@ -76,8 +45,6 @@ public partial class MainWindow
     private void SaveProfile()
     {
         _profile.LoadOrder = _allMods.Select(m => m.FolderName).ToList();
-
-        // FIX: Dynamically target the correct profile file instead of hardcoding "profile.json"
         _profiles.Save(RequireWorkspace(), _currentProfileName, _profile);
     }
 
@@ -103,85 +70,79 @@ public partial class MainWindow
         if (profiles.Contains(_currentProfileName))
             CboProfiles.SelectedItem = _currentProfileName;
         else
-            CboProfiles.SelectedItem = "Default";
+            CboProfiles.SelectedItem = ProfileRepository.DefaultProfileName;
     }
 
-    private void CboProfiles_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    private async void CboProfiles_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        if (CboProfiles.SelectedItem is string profileName)
+        if (CboProfiles.SelectedItem is string profileName && profileName != _currentProfileName)
         {
-            if (profileName == _currentProfileName) return;
-            LoadProfile(profileName);
+            await SwitchProfileAsync(profileName);
         }
     }
 
-    private void LoadProfile(string newProfileName)
+    /// <summary>
+    /// Switches the live saves and the active profile through Core. On a refusal or a failure the
+    /// selection goes back to the profile that is still active.
+    /// </summary>
+    private async Task<bool> SwitchProfileAsync(string newProfileName)
     {
-        if (_engine == null) return;
+        if (_gameSession == null) return false;
 
-        if (_currentProfileName != newProfileName)
+        SetStatus($"Swapping saves from {_currentProfileName} to {newProfileName}...", true);
+        OperationResult result = await _profileWorkflow.SwitchAsync(_gameSession, _currentProfileName, newProfileName);
+        if (!result.Success)
         {
-            try
-            {
-                if (!string.IsNullOrEmpty(_gameRoot))
-                {
-                    SetStatus($"Swapping saves from {_currentProfileName} to {newProfileName}...", true);
-                    _engine.SwapSaveFiles(_currentProfileName, newProfileName);
-
-                    _currentProfileName = newProfileName;
-                    SetActiveProfileMarker(newProfileName);
-                }
-            }
-            catch (Exception ex)
-            {
-                SetStatus($"Error swapping saves: {ex.Message}", false);
-                return;
-            }
+            SetStatus($"Cannot switch profile: {FirstErrorMessage(result)}", false);
+            CboProfiles.SelectedItem = _currentProfileName;
+            return false;
         }
 
+        _currentProfileName = newProfileName;
         LoadProfileDataOnly(newProfileName);
         RefreshModList();
-        SetStatus($"Profile switched to '{newProfileName}'.", true);
+        SetStatus($"Profile switched to '{newProfileName}'. Deploy it to apply its mods to the game.", true);
+        return true;
     }
 
     private async void BtnAddProfile_Click(object? sender, RoutedEventArgs e)
     {
+        if (_gameSession == null) return;
+
         var dialog = new TextInputDialog("New Profile", "Enter profile name (e.g. Hardcore)");
         var resultName = await dialog.ShowDialog<string?>(this);
+        if (string.IsNullOrWhiteSpace(resultName)) return;
 
-        if (!string.IsNullOrWhiteSpace(resultName))
+        string cleanName;
+        try
         {
-            string cleanName;
-            try
-            {
-                cleanName = SafePathService.ValidateDirectoryName(resultName, "Profile name");
-            }
-            catch (InvalidDataException ex)
-            {
-                SetStatus(ex.Message, false);
-                return;
-            }
-
-            _profile.EnabledMods = _allMods.Where(m => m.IsEnabled).Select(m => m.FolderName).ToList();
-            _profile.LoadOrder = _allMods.Select(m => m.FolderName).ToList();
-
-            _profiles.Save(RequireWorkspace(), cleanName, _profile);
-
-            RefreshProfileList();
-            CboProfiles.SelectedItem = cleanName;
-
-            SetStatus($"Profile '{cleanName}' created.", true);
+            cleanName = SafePathService.ValidateDirectoryName(resultName, "Profile name");
         }
+        catch (InvalidDataException ex)
+        {
+            SetStatus(ex.Message, false);
+            return;
+        }
+
+        SyncProfileFromList();
+        OperationResult result = await _profileWorkflow.CreateAsync(_gameSession, cleanName, _profile);
+        if (!result.Success)
+        {
+            SetStatus($"Cannot create profile: {FirstErrorMessage(result)}", false);
+            return;
+        }
+
+        RefreshProfileList();
+        CboProfiles.SelectedItem = cleanName;
+        SetStatus($"Profile '{cleanName}' created.", true);
     }
 
     private async void BtnSaveProfile_Click(object? sender, RoutedEventArgs e)
     {
         try
         {
-            _profile.EnabledMods = _allMods.Where(m => m.IsEnabled).Select(m => m.FolderName).ToList();
-            _profile.LoadOrder = _allMods.Select(m => m.FolderName).ToList();
-
-            SaveProfile(); // Uses the newly fixed dynamic helper
+            SyncProfileFromList();
+            SaveProfile();
 
             var msg = new RPGModder.UI.Dialogs.MessageBox("Success", $"Profile '{_currentProfileName}' saved successfully!");
             await msg.ShowDialog(this);
@@ -194,32 +155,38 @@ public partial class MainWindow
 
     private async void BtnRemoveProfile_Click(object? sender, RoutedEventArgs e)
     {
-        string currentProfile = CboProfiles.SelectedItem?.ToString() ?? "Default";
+        if (_gameSession == null) return;
 
-        if (currentProfile == "Default")
+        string currentProfile = CboProfiles.SelectedItem?.ToString() ?? ProfileRepository.DefaultProfileName;
+        if (currentProfile == ProfileRepository.DefaultProfileName)
         {
             await new RPGModder.UI.Dialogs.MessageBox("Error", "You cannot delete the Default profile.").ShowDialog(this);
             return;
         }
 
-        var confirm = new RPGModder.UI.Dialogs.MessageBox("Confirm Delete",
-            $"Are you sure you want to delete profile '{currentProfile}'?\nThis will switch you back to Default.", true);
-
-        var result = await confirm.ShowDialog<bool>(this);
-
-        if (result)
+        ConfirmChoice choice = await new ConfirmDialog(
+            "Delete profile",
+            $"Delete profile '{currentProfile}'? This switches you back to Default first.",
+            "Delete").AskAsync(this);
+        if (choice != ConfirmChoice.Confirm)
         {
-            _profiles.Delete(RequireWorkspace(), currentProfile);
-
-            RefreshProfileList();
-            CboProfiles.SelectedItem = "Default";
-
-            SetStatus($"Profile '{currentProfile}' deleted.", true);
+            return;
         }
+
+        // Switch away first, so a refused switch leaves the profile in place and still active.
+        if (currentProfile == _currentProfileName
+            && !await SwitchProfileAsync(ProfileRepository.DefaultProfileName))
+        {
+            return;
+        }
+
+        OperationResult result = await _profileWorkflow.DeleteAsync(_gameSession, currentProfile);
+        RefreshProfileList();
+        SetStatus(
+            result.Success ? $"Profile '{currentProfile}' deleted." : $"Cannot delete profile: {FirstErrorMessage(result)}",
+            result.Success);
     }
 
     #endregion
 
 }
-
-

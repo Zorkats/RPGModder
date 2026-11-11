@@ -34,13 +34,13 @@ public partial class MainWindow : Window
     private string _gameRoot = "";
     private string _gameExePath = "";
     private bool _hasPendingChanges = false;
+    private int _pendingRefreshVersion;
     private GameWorkspacePaths? _workspacePaths;
     private GameSession? _gameSession;
 
 
     // Services
     private readonly ModPackerService _packer = new();
-    private readonly ModInstallerService _installer = new();
     private readonly GameDetectorService _gameDetector = new();
     private readonly SettingsService _settings = new();
     private readonly ConflictDetectionService _conflictDetector = new();
@@ -52,6 +52,10 @@ public partial class MainWindow : Window
     private readonly IProfileRepository _profiles = new ProfileRepository();
     private readonly IDeploymentHistoryService _deploymentHistory = new DeploymentHistoryService();
     private readonly IGameSessionService _gameSessions = new GameSessionService();
+    private readonly ProfileWorkflow _profileWorkflow = new();
+    private readonly ModLibraryWorkflow _modLibrary = new();
+    private readonly VanillaBackupWorkflow _vanillaBackup = new();
+    private readonly SaveBackupWorkflow _saveBackups = new();
     private const string NexusAppSlug = "zorkats2-rpgmodder";
     private PackerResult? _currentAnalysis;
     private string? _tempExtractPath;
@@ -222,8 +226,6 @@ public partial class MainWindow : Window
         if (!url.StartsWith("nxm://", StringComparison.OrdinalIgnoreCase))
             return;
 
-        SetStatus($"Processing NXM download: {url}", true);
-
         // Parse the NXM URL
         // Format: nxm://gameDomain/mods/modId/files/fileId?key=xxx&expires=xxx&user_id=xxx
         try
@@ -236,6 +238,9 @@ public partial class MainWindow : Window
             {
                 var modId = int.Parse(segments[1]);
                 var fileId = int.Parse(segments[3]);
+
+                // The link carries a download key, so only the ids reach the screen.
+                SetStatus($"Processing Nexus download: mod {modId}, file {fileId}", true);
 
                 // Parse query params
                 var query = System.Web.HttpUtility.ParseQueryString(uri.Query);

@@ -30,10 +30,9 @@ public partial class MainWindow
 
     private async void BtnSaveManager_Click(object? sender, RoutedEventArgs e)
     {
-        if (_engine == null || string.IsNullOrEmpty(_gameRoot)) return;
+        if (_gameSession == null) return;
 
-        // Pass game root and "usesWww" flag to locate saves correctly
-        var win = new RPGModder.UI.Dialogs.SaveManagerWindow(_gameRoot, _engine.UsesWwwFolder);
+        var win = new RPGModder.UI.Dialogs.SaveManagerWindow(_gameSession, _saveBackups);
         await win.ShowDialog(this);
     }
 

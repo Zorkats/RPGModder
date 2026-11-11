@@ -1,10 +1,13 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using RPGModder.Core.Models;
+using RPGModder.Core.Operations;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 
 namespace RPGModder.Core.Services;
 
@@ -20,7 +23,6 @@ public class ModEngine
 
     // --- Configuration ---
     public bool UseMerging { get; set; } = true;
-    public bool UseSymlinks { get; set; } = false;
     public bool UseHardcoreMerging { get; set; } = false;
 
     // --- State & Reporting ---
@@ -61,12 +63,20 @@ public class ModEngine
     // PHASE 1: SAFETY SYSTEMS (Time Capsule & Vanilla Backup)
     // ==================================================================================
 
+    public const string BackupMarkerFileName = "backup_complete.marker";
+
+    public string BackupMarkerPath => Path.Combine(_backupPath, BackupMarkerFileName);
+
     public void InitializeSafeState()
     {
-        string markerFile = Path.Combine(_backupPath, "backup_complete.marker");
+        string markerFile = BackupMarkerPath;
 
         if (!File.Exists(markerFile))
         {
+            // Without its marker a backup folder is a partial one, left by an interrupted backup or an
+            // interrupted reset. It is never trusted or topped up: it is removed and taken again.
+            DiscardUnmarkedBackup();
+
             // --- NEW: DIRTY INSTALLATION TRIPWIRE ---
             if (IsDirtyInstallation())
             {
@@ -106,6 +116,16 @@ public class ModEngine
         }
 
         InitializeSafeSaves();
+    }
+
+    private void DiscardUnmarkedBackup()
+    {
+        if (Directory.Exists(_backupPath) && Directory.EnumerateFileSystemEntries(_backupPath).Any())
+        {
+            Directory.Delete(_backupPath, true);
+        }
+
+        Directory.CreateDirectory(_backupPath);
     }
 
     private bool IsDirtyInstallation()
@@ -254,13 +274,28 @@ public class ModEngine
         }
         finally
         {
-            try { if (Directory.Exists(stagingDir)) Directory.Delete(stagingDir, true); }
-            catch { }
+            TryDeleteSwapFolder(stagingDir);
             if (!keepRollback)
             {
-                try { if (Directory.Exists(rollbackDir)) Directory.Delete(rollbackDir, true); }
-                catch { }
+                TryDeleteSwapFolder(rollbackDir);
             }
+        }
+    }
+
+    private static void TryDeleteSwapFolder(string folder)
+    {
+        try
+        {
+            if (Directory.Exists(folder))
+            {
+                Directory.Delete(folder, true);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The swap already finished or was rolled back; a leftover work folder under
+            // profile-saves holds copies only and does not change which saves are live.
+            Trace.TraceWarning($"A save swap work folder could not be removed and is left in place: {folder}: {ex.Message}");
         }
     }
 
@@ -298,6 +333,24 @@ public class ModEngine
         LastMergeReports.Clear();
         LastOperationResult = new OperationResult();
 
+        // Two mods that add the same new file with different bytes have no base to merge against.
+        // The deploy stops before anything is written, on both the merging and the sequential path.
+        try
+        {
+            AddUnresolvedNewFileCollisions(profile, LastOperationResult);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // A mod name or target the deploy would refuse anyway, or a source that cannot be read.
+            LastOperationResult.AddError(DiagnosticCodes.DeploymentFailed, ex.Message);
+        }
+
+        if (!LastOperationResult.Success)
+        {
+            TryWriteDeploymentHistory(profile, LastOperationResult);
+            return LastOperationResult;
+        }
+
         using var transaction = DeploymentTransaction.Begin(
             _contentPath,
             _workspace.Transactions,
@@ -318,7 +371,7 @@ public class ModEngine
         }
         catch (Exception ex)
         {
-            LastOperationResult.AddError("deployment.failed", ex.Message);
+            LastOperationResult.AddError(DiagnosticCodes.DeploymentFailed, ex.Message);
             transaction.Rollback();
         }
 
@@ -347,7 +400,7 @@ public class ModEngine
             {
                 if (!File.Exists(gameFile) || !FilesAreEqual(backupFile, gameFile))
                 {
-                    CopyOrLinkFile(backupFile, gameFile);
+                    CopyFile(backupFile, gameFile);
                 }
             }
         }
@@ -392,12 +445,12 @@ public class ModEngine
                 }
                 catch (Exception ex)
                 {
-                    result.AddError("manifest.invalid", ex.Message, modFolderName);
+                    result.AddError(DiagnosticCodes.ManifestInvalid, ex.Message, modFolderName);
                 }
             }
             else
             {
-                result.AddError("manifest.missing", "The enabled mod has no mod.json file.", modFolderName);
+                result.AddError(DiagnosticCodes.ManifestMissing, "The enabled mod has no mod.json file.", modFolderName);
             }
         }
     }
@@ -418,7 +471,7 @@ public class ModEngine
 
             if (!File.Exists(manifestPath))
             {
-                result.AddError("manifest.missing", "The enabled mod has no mod.json file.", modFolderName);
+                result.AddError(DiagnosticCodes.ManifestMissing, "The enabled mod has no mod.json file.", modFolderName);
                 continue;
             }
 
@@ -447,7 +500,7 @@ public class ModEngine
             }
             catch (Exception ex)
             {
-                result.AddError("manifest.invalid", ex.Message, modFolderName);
+                result.AddError(DiagnosticCodes.ManifestInvalid, ex.Message, modFolderName);
             }
         }
 
@@ -487,7 +540,7 @@ public class ModEngine
                     throw new FileNotFoundException("A manifest source file is missing.", sourceFile);
                 }
 
-                CopyOrLinkFile(sourceFile, fullTargetPath);
+                CopyFile(sourceFile, fullTargetPath);
             }
         }
 
@@ -519,7 +572,7 @@ public class ModEngine
                 throw new FileNotFoundException("A manifest source file is missing.", sourceFile);
             }
 
-            CopyOrLinkFile(sourceFile, targetFile);
+            CopyFile(sourceFile, targetFile);
         }
 
         foreach (var patch in manifest.JsonPatches)
@@ -739,7 +792,7 @@ public class ModEngine
 
             if (!File.Exists(gameFile) || !FilesAreEqual(backupFile, gameFile))
             {
-                CopyOrLinkFile(backupFile, gameFile);
+                CopyFile(backupFile, gameFile);
             }
         }
 
@@ -757,22 +810,14 @@ public class ModEngine
         DeleteEmptyDirs(gameDir);
     }
 
-    private void CopyOrLinkFile(string source, string dest)
+    private static void CopyFile(string source, string dest)
     {
         string? destDir = Path.GetDirectoryName(dest);
         if (destDir != null) Directory.CreateDirectory(destDir);
 
+        // Delete first so that a link left by an older version is replaced by a real file instead of
+        // having its target overwritten.
         if (File.Exists(dest)) File.Delete(dest);
-
-        if (UseSymlinks)
-        {
-            try
-            {
-                File.CreateSymbolicLink(dest, source);
-                return;
-            }
-            catch { }
-        }
 
         File.Copy(source, dest, true);
     }
@@ -808,8 +853,10 @@ public class ModEngine
 
             return hash1.SequenceEqual(hash2);
         }
-        catch
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            // Unequal makes the caller copy the backup file over the game file, which is the safe side.
+            Trace.TraceWarning($"Files could not be compared and are treated as different: {path1}: {ex.Message}");
             return false;
         }
     }
@@ -827,7 +874,11 @@ public class ModEngine
                 }
             }
         }
-        catch { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // An empty folder left behind changes no file the game loads.
+            Trace.TraceWarning($"Empty folders under {startDir} could not be removed: {ex.Message}");
+        }
     }
 
     private string ResolveModSourcePath(string modFolder, string sourcePath)
@@ -873,6 +924,96 @@ public class ModEngine
         return targetPath;
     }
 
+    private void AddUnresolvedNewFileCollisions(ModProfile profile, OperationResult result)
+    {
+        var suppliers = new Dictionary<string, List<(string ModFolderName, string SourceFile)>>(StringComparer.OrdinalIgnoreCase);
+        foreach (string modFolderName in profile.EnabledMods)
+        {
+            ModManifest? manifest = TryReadManifestForGuard(modFolderName, out string modPath);
+            if (manifest == null)
+            {
+                continue;
+            }
+
+            foreach (FileOperation op in manifest.FileOps)
+            {
+                string targetPath = NormalizeTargetPath(op.Target);
+                if (FilePolicyService.IsConfigSave(Path.GetFileName(targetPath).ToLowerInvariant()))
+                {
+                    continue;
+                }
+
+                if (!suppliers.TryGetValue(targetPath, out var list))
+                {
+                    list = new List<(string, string)>();
+                    suppliers[targetPath] = list;
+                }
+
+                list.Add((modFolderName, ResolveModSourcePath(modPath, op.Source)));
+            }
+        }
+
+        foreach (var (targetPath, list) in suppliers)
+        {
+            if (list.Count < 2 || HasVanillaCounterpart(targetPath))
+            {
+                continue;
+            }
+
+            int distinctContents = list
+                .Where(item => File.Exists(item.SourceFile))
+                .Select(item => HashFile(item.SourceFile))
+                .Distinct(StringComparer.Ordinal)
+                .Count();
+            if (distinctContents < 2)
+            {
+                continue;
+            }
+
+            string mods = string.Join(", ", list.Select(item => item.ModFolderName).Distinct(StringComparer.OrdinalIgnoreCase));
+            result.AddError(
+                DiagnosticCodes.DeployUnresolvedCollisions,
+                $"Mods {mods} add different files at a path the game does not have.",
+                targetPath);
+        }
+    }
+
+    private ModManifest? TryReadManifestForGuard(string modFolderName, out string modPath)
+    {
+        modPath = SafePathService.ResolveContainedPath(
+            _modsRootPath,
+            SafePathService.ValidateDirectoryName(modFolderName, "Enabled mod name"),
+            "Enabled mod path");
+        string manifestPath = Path.Combine(modPath, "mod.json");
+        if (!File.Exists(manifestPath))
+        {
+            // The deploy reports the missing manifest itself, with manifest.missing.
+            return null;
+        }
+
+        try
+        {
+            return JsonConvert.DeserializeObject<ModManifest>(File.ReadAllText(manifestPath));
+        }
+        catch (JsonException)
+        {
+            // The deploy reports the unreadable manifest itself, with manifest.invalid.
+            return null;
+        }
+    }
+
+    private bool HasVanillaCounterpart(string targetPath)
+    {
+        string backupFile = SafePathService.ResolveContainedPath(_backupPath, targetPath, "Backup target");
+        return File.Exists(backupFile);
+    }
+
+    private static string HashFile(string path)
+    {
+        using FileStream stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream));
+    }
+
     private void TryWriteDeploymentHistory(ModProfile profile, OperationResult result)
     {
         try
@@ -881,7 +1022,7 @@ public class ModEngine
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            result.AddWarning("history.write_failed", $"The deployment history could not be recorded: {ex.Message}");
+            result.AddWarning(DiagnosticCodes.HistoryWriteFailed, $"The deployment history could not be recorded: {ex.Message}");
         }
     }
 

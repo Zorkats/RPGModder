@@ -592,9 +592,6 @@
                             <StackPanel Spacing="12">
                                 <TextBlock Text="Mod Management" FontSize="16" FontWeight="SemiBold" Foreground="#EEE"/>
 
-                                <CheckBox Name="ChkUseSymlinks" Content="Use symbolic links for deployment"
-                                          Foreground="#CCC" ToolTip.Tip="Uses shortcuts instead of copying files. Saves space and time."/>
-
                                 <CheckBox Name="ChkSmartMerge" Content="Smart JSON merging (like Wrye Bash)"
                                           Foreground="#CCC" IsChecked="True"/>
 
