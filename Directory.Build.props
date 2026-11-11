@@ -1,0 +1,12 @@
+<Project>
+    <PropertyGroup>
+        <!-- Restore must match the committed packages.lock.json files; CI restores in locked mode. -->
+        <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+
+        <!-- Every build fails on a warning, so a local build sees what CI sees. -->
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+        <!-- Package security advisories stay visible warnings: a newly published advisory must not fail unrelated builds overnight. -->
+        <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+    </PropertyGroup>
+</Project>
