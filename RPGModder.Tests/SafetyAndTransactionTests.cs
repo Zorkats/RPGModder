@@ -25,6 +25,10 @@ public sealed class SafetyAndTransactionTests : IDisposable
     [InlineData("../outside.txt")]
     [InlineData("folder/../../outside.txt")]
     [InlineData("C:\\outside.txt")]
+    [InlineData("C:outside.txt")]
+    [InlineData("..\\outside.txt")]
+    [InlineData("folder\\..\\..\\outside.txt")]
+    [InlineData("\\\\server\\share\\outside.txt")]
     public void ResolveContainedPath_RejectsEscapingPaths(string path)
     {
         Assert.Throws<InvalidDataException>(() =>
@@ -32,10 +36,21 @@ public sealed class SafetyAndTransactionTests : IDisposable
     }
 
     [Theory]
+    [InlineData("www\\data\\Actors.json")]
+    [InlineData("www/data\\Actors.json")]
+    public void ResolveContainedPath_TreatsBackslashAsSeparatorOnEveryPlatform(string path)
+    {
+        string resolved = SafePathService.ResolveContainedPath(_root, path, "Test path");
+
+        Assert.Equal(Path.Combine(Path.GetFullPath(_root), "www", "data", "Actors.json"), resolved);
+    }
+
+    [Theory]
     [InlineData("..")]
     [InlineData(".")]
     [InlineData("folder/name")]
     [InlineData("folder\\name")]
+    [InlineData("C:name")]
     public void ValidateDirectoryName_RejectsUnsafeNames(string name)
     {
         Assert.Throws<InvalidDataException>(() =>

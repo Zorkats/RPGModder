@@ -14,13 +14,16 @@ public static class SafePathService
             throw new InvalidDataException($"{fieldName} cannot be empty.");
         }
 
-        if (relativePath.IndexOf('\0') >= 0 || Path.IsPathRooted(relativePath))
+        // Manifests are written on Windows and deployed on Linux too, so a backslash is a separator
+        // and a drive letter is rooted on every platform.
+        string portable = relativePath.Replace('\\', '/');
+        if (portable.IndexOf('\0') >= 0 || Path.IsPathRooted(portable) || HasDriveLetter(portable))
         {
             throw new InvalidDataException($"{fieldName} must be a relative path.");
         }
 
         string fullRoot = Path.GetFullPath(root);
-        string candidate = Path.GetFullPath(Path.Combine(fullRoot, relativePath));
+        string candidate = Path.GetFullPath(Path.Combine(fullRoot, portable));
         string rootPrefix = fullRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
                             + Path.DirectorySeparatorChar;
 
@@ -42,14 +45,18 @@ public static class SafePathService
         string trimmed = value.Trim();
         if (trimmed is "." or ".." ||
             trimmed.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
-            trimmed.Contains(Path.DirectorySeparatorChar) ||
-            trimmed.Contains(Path.AltDirectorySeparatorChar) ||
+            trimmed.IndexOfAny(['/', '\\', ':']) >= 0 ||
             !string.Equals(trimmed, Path.GetFileName(trimmed), StringComparison.Ordinal))
         {
             throw new InvalidDataException($"{fieldName} is not a valid directory name: {value}");
         }
 
         return trimmed;
+    }
+
+    private static bool HasDriveLetter(string path)
+    {
+        return path.Length >= 2 && path[1] == ':' && char.IsAsciiLetter(path[0]);
     }
 
     private static StringComparison PathComparison()

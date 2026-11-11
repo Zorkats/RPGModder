@@ -223,7 +223,10 @@ public sealed class SafetyGuardTests : IDisposable
     private static async Task<OperationResult> ResetWithReadOnlyFolderAsync(GameSession session, string backupData)
     {
         // A folder without write permission keeps its entries, so the recursive delete fails.
+        // Reset moves the old backup to vanilla.retired before deleting it, so the permission is
+        // restored wherever the folder ended up. The failure stays transient, as on Windows.
         UnixFileMode mode = File.GetUnixFileMode(backupData);
+        string retiredData = Path.Combine(session.Workspace.VanillaRetired, "data");
         File.SetUnixFileMode(backupData, UnixFileMode.UserRead | UnixFileMode.UserExecute);
         try
         {
@@ -231,7 +234,13 @@ public sealed class SafetyGuardTests : IDisposable
         }
         finally
         {
-            File.SetUnixFileMode(backupData, mode);
+            foreach (string folder in new[] { backupData, retiredData })
+            {
+                if (Directory.Exists(folder))
+                {
+                    File.SetUnixFileMode(folder, mode);
+                }
+            }
         }
     }
 
