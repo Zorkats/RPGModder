@@ -9,5 +9,9 @@ riderModule.iml
 *.userprefs
 artifacts/
 .allyrc
-packaging/
-docs/
+packaging/linux/ally-run.sh
+
+# Private maintainer notes, kept out until they move to devdocs/ (CI-14).
+docs/overhaul-spec.md
+docs/release-checklist-v2.0.0.md
+docs/release-notes-v2.0.0.md

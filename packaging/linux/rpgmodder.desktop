@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=RPGModder
+Comment=Transactional mod manager for RPG Maker MV and MZ games
+Exec=RPGModder %u
+Icon=rpgmodder
+Terminal=false
+Categories=Game;
+MimeType=x-scheme-handler/nxm;
+StartupNotify=true

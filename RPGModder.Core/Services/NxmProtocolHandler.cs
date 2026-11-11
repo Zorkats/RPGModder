@@ -153,13 +153,13 @@ public class NxmProtocolHandler
 
             // Parse query parameters manually
             var queryParams = ParseQueryString(uri.Query);
-            
+
             if (queryParams.TryGetValue("key", out var key))
                 link.Key = key;
-            
+
             if (queryParams.TryGetValue("expires", out var expiresStr) && long.TryParse(expiresStr, out long expires))
                 link.Expires = expires;
-            
+
             if (queryParams.TryGetValue("user_id", out var userIdStr) && int.TryParse(userIdStr, out int userId))
                 link.UserId = userId;
 
@@ -175,13 +175,13 @@ public class NxmProtocolHandler
     private static Dictionary<string, string> ParseQueryString(string query)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        
+
         if (string.IsNullOrEmpty(query)) return result;
-        
+
         // Remove leading '?'
         if (query.StartsWith("?"))
             query = query.Substring(1);
-        
+
         foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
         {
             var parts = pair.Split('=', 2);
@@ -194,7 +194,7 @@ public class NxmProtocolHandler
                 result[Uri.UnescapeDataString(parts[0])] = "";
             }
         }
-        
+
         return result;
     }
 
@@ -337,7 +337,7 @@ public class NxmLink
     public string OriginalUrl { get; set; } = "";
 
     public bool IsValid => !string.IsNullOrEmpty(GameDomain) && ModId > 0 && FileId > 0;
-    
+
     public bool HasDownloadParams => !string.IsNullOrEmpty(Key) && Expires > 0 && UserId > 0;
 
     public override string ToString() => $"nxm://{GameDomain}/mods/{ModId}/files/{FileId}";

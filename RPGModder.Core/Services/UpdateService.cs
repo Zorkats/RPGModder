@@ -1,4 +1,5 @@
 using Newtonsoft.Json.Linq;
+using RPGModder.Core.Updates;
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
@@ -11,6 +12,10 @@ public class UpdateService : IDisposable
 {
     private const string REPO_OWNER = "Zorkats";
     private const string REPO_NAME = "RPGModder";
+    private const long MaximumPackageBytes = 512L * 1024L * 1024L;
+    private const long MaximumChecksumsBytes = 64L * 1024L;
+    private const long MaximumExtractedBytes = 2L * 1024L * 1024L * 1024L;
+    private const int MaximumEntries = 100_000;
 
     public string CurrentVersion
     {
@@ -24,8 +29,14 @@ public class UpdateService : IDisposable
     private readonly HttpClient _http;
 
     public UpdateService()
+        : this(new HttpClientHandler())
     {
-        _http = new HttpClient();
+    }
+
+    /// <summary>For tests: the handler answers every request, so no test reaches the network.</summary>
+    internal UpdateService(HttpMessageHandler handler)
+    {
+        _http = new HttpClient(handler);
         _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("RPGModder", "1.0"));
     }
 
@@ -35,31 +46,9 @@ public class UpdateService : IDisposable
         {
             string url = $"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest";
             string json = await _http.GetStringAsync(url);
-            var release = JObject.Parse(json);
-
-            string latestTag = release["tag_name"]?.ToString().TrimStart('v') ?? "0.0.0";
-
-            if (IsNewer(latestTag, CurrentVersion))
+            if (OperatingSystem.IsLinux() || OperatingSystem.IsWindows())
             {
-                var assets = release["assets"]?.Children() ?? Enumerable.Empty<JToken>();
-                string platformToken = OperatingSystem.IsLinux() ? "linux" : "win";
-                JToken? package = assets.FirstOrDefault(asset =>
-                    IsSupportedPackageName(asset["name"]?.ToString()) &&
-                    asset["name"]?.ToString().Contains(platformToken, StringComparison.OrdinalIgnoreCase) == true);
-                string downloadUrl = package?["browser_download_url"]?.ToString() ?? "";
-                if (!Uri.TryCreate(downloadUrl, UriKind.Absolute, out Uri? uri) ||
-                    uri.Scheme != Uri.UriSchemeHttps ||
-                    !IsOfficialGitHubHost(uri.Host))
-                {
-                    return null;
-                }
-
-                return new UpdateInfo
-                {
-                    Version = latestTag,
-                    DownloadUrl = downloadUrl,
-                    ReleaseNotes = release["body"]?.ToString() ?? "No release notes."
-                };
+                return SelectRelease(JObject.Parse(json), CurrentVersion, OperatingSystem.IsLinux());
             }
         }
         catch (Exception ex)
@@ -84,43 +73,112 @@ public class UpdateService : IDisposable
         }
     }
 
-    public async Task DownloadAndInstallAsync(string url, IProgress<double> progress)
+    /// <summary>
+    /// The update a GitHub release offers on one platform, or null (CI-11, TX-13). The package is chosen by its
+    /// exact <see cref="ReleaseAssets"/> name, and a release without <c>SHA256SUMS</c> offers nothing, because
+    /// its package could not be verified.
+    /// </summary>
+    internal static UpdateInfo? SelectRelease(JObject release, string currentVersion, bool linux)
     {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri) ||
-            uri.Scheme != Uri.UriSchemeHttps ||
-            !IsOfficialGitHubHost(uri.Host))
+        string latestTag = release["tag_name"]?.ToString().TrimStart('v') ?? "0.0.0";
+        if (!IsNewer(latestTag, currentVersion))
+        {
+            return null;
+        }
+
+        List<JToken> assets = release["assets"]?.Children().ToList() ?? [];
+        string? AssetUrl(string name)
+        {
+            List<JToken> matches = assets.Where(asset => string.Equals(asset["name"]?.ToString(), name, StringComparison.Ordinal)).ToList();
+            string? url = matches.Count == 1 ? matches[0]["browser_download_url"]?.ToString() : null;
+            return url != null && IsOfficialUrl(url) ? url : null;
+        }
+
+        string? checksumsUrl = AssetUrl(ReleaseAssets.Checksums);
+        if (checksumsUrl == null)
+        {
+            Trace.TraceWarning($"Release {latestTag} has no {ReleaseAssets.Checksums}, so it is not offered.");
+            return null;
+        }
+
+        foreach (string name in ReleaseAssets.PackagesFor(linux, latestTag))
+        {
+            if (AssetUrl(name) is { } downloadUrl)
+            {
+                return new UpdateInfo
+                {
+                    Version = latestTag,
+                    AssetName = name,
+                    DownloadUrl = downloadUrl,
+                    ChecksumsUrl = checksumsUrl,
+                    ReleaseNotes = release["body"]?.ToString() ?? "No release notes."
+                };
+            }
+        }
+
+        Trace.TraceWarning($"Release {latestTag} has no package for this platform.");
+        return null;
+    }
+
+    /// <summary>
+    /// Downloads the package and <c>SHA256SUMS</c>, verifies the package's SHA-256, and only then stages it (TX-13).
+    /// A missing or wrong hash throws <see cref="UpdateChecksumException"/> before anything is extracted.
+    /// </summary>
+    public async Task DownloadAndInstallAsync(UpdateInfo update, IProgress<double> progress)
+    {
+        if (!IsOfficialUrl(update.DownloadUrl) || !IsOfficialUrl(update.ChecksumsUrl))
         {
             throw new InvalidOperationException("The update URL is not an official GitHub release URL.");
         }
 
-        // 1. Download to Temp
-        string packageExtension = uri.AbsolutePath.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase)
-            ? ".tar.gz"
-            : ".zip";
-        string tempFile = Path.Combine(Path.GetTempPath(), "RPGModder_Update" + packageExtension);
-        if (File.Exists(tempFile)) File.Delete(tempFile);
+        Uri uri = new(update.DownloadUrl);
+        if (!string.Equals(Path.GetFileName(Uri.UnescapeDataString(uri.AbsolutePath)), update.AssetName, StringComparison.Ordinal) ||
+            !ReleaseAssets.PackagesFor(OperatingSystem.IsLinux(), update.Version).Contains(update.AssetName, StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException("The update URL does not name the expected release package.");
+        }
 
-        using (var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
+        // 1. Download the checksums, then the package, to Temp
+        string sums = await DownloadTextAsync(update.ChecksumsUrl, MaximumChecksumsBytes);
+        string packageExtension = update.AssetName.EndsWith(".tar.gz", StringComparison.Ordinal) ? ".tar.gz" : ".zip";
+        string tempFile = Path.Combine(Path.GetTempPath(), $"RPGModder_Update_{Guid.NewGuid():N}{packageExtension}");
+
+        using (var response = await _http.GetAsync(update.DownloadUrl, HttpCompletionOption.ResponseHeadersRead))
         {
             response.EnsureSuccessStatusCode();
-            if (response.Content.Headers.ContentLength > 512L * 1024L * 1024L)
+            if (response.Content.Headers.ContentLength > MaximumPackageBytes)
             {
                 throw new InvalidDataException("The update package exceeds the 512 MB safety limit.");
             }
 
             var totalBytes = response.Content.Headers.ContentLength ?? 10 * 1024 * 1024;
             using var stream = await response.Content.ReadAsStreamAsync();
-            using var fileStream = new FileStream(tempFile, FileMode.Create);
+            using var fileStream = new FileStream(tempFile, FileMode.CreateNew);
             var buffer = new byte[8192];
             long totalRead = 0;
             int bytesRead;
 
-            while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+            while ((bytesRead = await stream.ReadAsync(buffer)) > 0)
             {
-                await fileStream.WriteAsync(buffer, 0, bytesRead);
                 totalRead += bytesRead;
-                progress.Report((double)totalRead / totalBytes * 100);
+                if (totalRead > MaximumPackageBytes)
+                {
+                    throw new InvalidDataException("The update package exceeds the 512 MB safety limit.");
+                }
+
+                await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead));
+                progress.Report(Math.Min(100, (double)totalRead / totalBytes * 100));
             }
+        }
+
+        try
+        {
+            ReleaseChecksums.Verify(tempFile, sums, update.AssetName);
+        }
+        catch (UpdateChecksumException)
+        {
+            TryCleanUp(() => File.Delete(tempFile), tempFile);
+            throw;
         }
 
         // 2. Extract to a staging folder
@@ -131,13 +189,13 @@ public class UpdateService : IDisposable
 
         ExtractPackage(tempFile, extractFolder);
 
-        // Find the actual content root — ZIP may contain a single subfolder
+        // Find the actual content root: the archive may wrap everything in one folder
         string contentRoot = extractFolder;
         var topDirs = Directory.GetDirectories(extractFolder);
         var topFiles = Directory.GetFiles(extractFolder);
         if (topDirs.Length == 1 && topFiles.Length == 0)
         {
-            // ZIP wraps everything in one folder — use it as root
+            // The archive wraps everything in one folder, so that folder is the root
             contentRoot = topDirs[0];
         }
 
@@ -165,6 +223,32 @@ public class UpdateService : IDisposable
             throw new PlatformNotSupportedException("Automatic updates are supported on Windows and Linux.");
 
         PrepareWindowsUpdate(currentDir, updateStaging);
+    }
+
+    private async Task<string> DownloadTextAsync(string url, long maximumBytes)
+    {
+        using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+        response.EnsureSuccessStatusCode();
+        if (response.Content.Headers.ContentLength > maximumBytes)
+        {
+            throw new UpdateChecksumException($"{ReleaseAssets.Checksums} is larger than expected, so the update was not applied.");
+        }
+
+        using var stream = await response.Content.ReadAsStreamAsync();
+        using var limited = new MemoryStream();
+        var buffer = new byte[8192];
+        int bytesRead;
+        while ((bytesRead = await stream.ReadAsync(buffer)) > 0)
+        {
+            if (limited.Length + bytesRead > maximumBytes)
+            {
+                throw new UpdateChecksumException($"{ReleaseAssets.Checksums} is larger than expected, so the update was not applied.");
+            }
+
+            limited.Write(buffer, 0, bytesRead);
+        }
+
+        return System.Text.Encoding.UTF8.GetString(limited.ToArray());
     }
 
     private static void PrepareWindowsUpdate(string currentDir, string updateStaging)
@@ -373,17 +457,76 @@ public class UpdateService : IDisposable
 
         if (archivePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
         {
-            ZipFile.ExtractToDirectory(archivePath, destinationDirectory);
+            ExtractZipSafely(archivePath, destinationDirectory);
             return;
         }
 
         throw new InvalidDataException("The update package format is not supported.");
     }
 
+    /// <summary>
+    /// Extracts a zip with the tar path's limits (TX-13): at most 100,000 entries and 2 GB, every path inside
+    /// the destination, and no symbolic link entries.
+    /// </summary>
+    private static void ExtractZipSafely(string archivePath, string destinationDirectory)
+    {
+        const int unixFileTypeMask = 0xF000;
+        const int unixSymbolicLink = 0xA000;
+        const int unixPermissionMask = 0x1FF;
+        Directory.CreateDirectory(destinationDirectory);
+        long extractedBytes = 0;
+
+        using ZipArchive archive = ZipFile.OpenRead(archivePath);
+        if (archive.Entries.Count > MaximumEntries)
+            throw new InvalidDataException("The update package contains too many entries.");
+
+        foreach (ZipArchiveEntry entry in archive.Entries)
+        {
+            int unixMode = (entry.ExternalAttributes >> 16) & 0xFFFF;
+            if ((unixMode & unixFileTypeMask) == unixSymbolicLink)
+                throw new InvalidDataException($"The update package contains a symbolic link: {entry.FullName}.");
+
+            string relativePath = entry.FullName.Replace('\\', '/');
+            string destination = SafePathService.ResolveContainedPath(destinationDirectory, relativePath, "zip entry path");
+            if (relativePath.EndsWith('/'))
+            {
+                Directory.CreateDirectory(destination);
+                continue;
+            }
+
+            extractedBytes = checked(extractedBytes + entry.Length);
+            if (extractedBytes > MaximumExtractedBytes)
+                throw new InvalidDataException("The extracted update package exceeds the 2 GB safety limit.");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            using (Stream input = entry.Open())
+            using (var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                CopyAtMost(input, output, entry.Length);
+            }
+
+            if (OperatingSystem.IsLinux() && (unixMode & unixPermissionMask) != 0)
+                File.SetUnixFileMode(destination, (UnixFileMode)(unixMode & unixPermissionMask));
+        }
+    }
+
+    /// <summary>Copies a zip entry, refusing more bytes than its header declares.</summary>
+    private static void CopyAtMost(Stream input, Stream output, long declaredLength)
+    {
+        var buffer = new byte[81920];
+        long copied = 0;
+        int read;
+        while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            copied += read;
+            if (copied > declaredLength)
+                throw new InvalidDataException("A zip entry in the update package is larger than its header declares.");
+            output.Write(buffer, 0, read);
+        }
+    }
+
     private static void ExtractTarSafely(Stream archive, string destinationDirectory)
     {
-        const long maximumExtractedBytes = 2L * 1024L * 1024L * 1024L;
-        const int maximumEntries = 100_000;
         Directory.CreateDirectory(destinationDirectory);
         long extractedBytes = 0;
         int entryCount = 0;
@@ -392,7 +535,7 @@ public class UpdateService : IDisposable
         TarEntry? entry;
         while ((entry = reader.GetNextEntry()) != null)
         {
-            if (++entryCount > maximumEntries)
+            if (++entryCount > MaximumEntries)
                 throw new InvalidDataException("The update package contains too many entries.");
 
             string relativePath = entry.Name.Replace('\\', '/');
@@ -408,7 +551,7 @@ public class UpdateService : IDisposable
                 case TarEntryType.V7RegularFile:
                 case TarEntryType.ContiguousFile:
                     extractedBytes = checked(extractedBytes + entry.Length);
-                    if (extractedBytes > maximumExtractedBytes)
+                    if (extractedBytes > MaximumExtractedBytes)
                         throw new InvalidDataException("The extracted update package exceeds the 2 GB safety limit.");
 
                     Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
@@ -431,7 +574,7 @@ public class UpdateService : IDisposable
         }
     }
 
-    private bool IsNewer(string latest, string current)
+    private static bool IsNewer(string latest, string current)
     {
         if (Version.TryParse(latest, out var v1) && Version.TryParse(current, out var v2))
         {
@@ -446,16 +589,11 @@ public class UpdateService : IDisposable
                host.EndsWith(".github.com", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsSupportedPackageName(string? name)
+    private static bool IsOfficialUrl(string url)
     {
-        if (string.IsNullOrWhiteSpace(name))
-            return false;
-        if (OperatingSystem.IsWindows())
-            return name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
-        if (OperatingSystem.IsLinux())
-            return name.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase) ||
-                   name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
-        return false;
+        return Uri.TryCreate(url, UriKind.Absolute, out Uri? uri) &&
+               uri.Scheme == Uri.UriSchemeHttps &&
+               IsOfficialGitHubHost(uri.Host);
     }
 
     public void Dispose()
@@ -467,6 +605,8 @@ public class UpdateService : IDisposable
 public class UpdateInfo
 {
     public string Version { get; set; } = "";
+    public string AssetName { get; set; } = "";
     public string DownloadUrl { get; set; } = "";
+    public string ChecksumsUrl { get; set; } = "";
     public string ReleaseNotes { get; set; } = "";
 }

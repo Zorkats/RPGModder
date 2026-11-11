@@ -85,7 +85,7 @@ public class ConflictDetectionService
     public ConflictReport GenerateReport(IList<ModListItem> mods)
     {
         var report = new ConflictReport();
-        
+
         var fileToIntents = new Dictionary<string, List<(ModListItem Mod, ModFileIntent Intent)>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var mod in mods.Where(m => m.IsEnabled))

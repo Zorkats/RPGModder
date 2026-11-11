@@ -9,6 +9,7 @@ using Newtonsoft.Json;
 using RPGModder.Core.Application;
 using RPGModder.Core.Models;
 using RPGModder.Core.Services;
+using RPGModder.Core.Workspace;
 using RPGModder.UI.Dialogs;
 using System;
 using System.Collections.Generic;
@@ -21,13 +22,12 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
-using RPGModder.Core.Workspace;
 
 namespace RPGModder.UI;
 
 public partial class MainWindow
 {
-#region Mod Profiles
+    #region Mod Profiles
 
     // --- Core Data Methods ---
     private void LoadProfileDataOnly(string profileName)

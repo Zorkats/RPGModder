@@ -26,7 +26,7 @@ namespace RPGModder.UI;
 
 public partial class MainWindow
 {
-#region Creator Tools - Auto-Packer
+    #region Creator Tools - Auto-Packer
 
     private async void BtnBrowseWork_Click(object? sender, RoutedEventArgs e)
     {
@@ -84,7 +84,7 @@ public partial class MainWindow
         // 1. Auto-Detect Feature: Check for our own Safe-State Backup
         if (!string.IsNullOrEmpty(_gameRoot))
         {
-        string cleanBackup = RequireWorkspace().CleanBackup;
+            string cleanBackup = RequireWorkspace().CleanBackup;
             if (Directory.Exists(cleanBackup))
             {
                 if (string.IsNullOrEmpty(TxtVanillaFolder.Text))
@@ -315,6 +315,6 @@ public partial class MainWindow
 
     #endregion
 
-    
+
 }
 

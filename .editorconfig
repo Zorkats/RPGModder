@@ -1,0 +1,40 @@
+root = true
+
+[*]
+indent_style = space
+end_of_line = lf
+trim_trailing_whitespace = true
+
+[*.{cs,csx}]
+indent_size = 4
+
+# Layout (Allman braces, the style the code already uses)
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_indent_case_contents_when_block = false
+csharp_space_after_keywords_in_control_flow_statements = true
+csharp_preserve_single_line_statements = true
+csharp_preserve_single_line_blocks = true
+
+# Usings
+dotnet_sort_system_directives_first = false
+dotnet_separate_import_directive_groups = false
+
+# Namespaces
+csharp_style_namespace_declarations = file_scoped:suggestion
+
+[*.{axaml,xaml,csproj,props,targets,xml}]
+indent_size = 4
+
+[*.{json,yml,yaml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.sh]
+indent_size = 4

@@ -3,8 +3,8 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using RPGModder.Core.Models;
 using RPGModder.Core.Services;
-using RPGModder.Tests.Support;
 using RPGModder.Core.Workspace;
+using RPGModder.Tests.Support;
 
 namespace RPGModder.Tests.Characterization;
 

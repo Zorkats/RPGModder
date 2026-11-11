@@ -1,11 +1,11 @@
 using Avalonia;
+using RPGModder.Core.Services;
 using System;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using RPGModder.Core.Services;
 
 namespace RPGModder.UI;
 

@@ -9,6 +9,7 @@ using Newtonsoft.Json;
 using RPGModder.Core.Application;
 using RPGModder.Core.Models;
 using RPGModder.Core.Services;
+using RPGModder.Core.Workspace;
 using RPGModder.UI.Dialogs;
 using System;
 using System.Collections.Generic;
@@ -21,7 +22,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
-using RPGModder.Core.Workspace;
 
 namespace RPGModder.UI;
 
@@ -43,7 +43,7 @@ public partial class MainWindow
 
             CmbDetectedGames.IsVisible = true;
             TxtGamePath.IsVisible = false;
-        SetStatus($"Loaded {DetectedGames.Count} cached game(s). Select Scan to search again.", true);
+            SetStatus($"Loaded {DetectedGames.Count} cached game(s). Select Scan to search again.", true);
 
             // Auto-select last used game
             if (!string.IsNullOrEmpty(_settings.Settings.LastGamePath))
@@ -127,7 +127,7 @@ public partial class MainWindow
             {
                 CmbDetectedGames.IsVisible = false;
                 TxtGamePath.IsVisible = true;
-            SetStatus("No games found. Browse to a game executable manually.", true);
+                SetStatus("No games found. Browse to a game executable manually.", true);
             }
         });
     }
@@ -142,8 +142,8 @@ public partial class MainWindow
 
     #endregion
 
-    
-#region Game Selection & Initialization
+
+    #region Game Selection & Initialization
 
     private void EvaluateModLoaderEnvironment()
     {
@@ -437,6 +437,6 @@ public partial class MainWindow
 
     #endregion
 
-    
+
 }
 

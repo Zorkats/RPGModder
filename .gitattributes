@@ -1,1 +1,5 @@
+# Every text file is stored and checked out with LF, so dotnet format sees the same bytes on
+# Windows and Linux runners (CI-7).
+* text=auto eol=lf
+
 RPGModder.Tests/Merge/Golden/** -text

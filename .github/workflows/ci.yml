@@ -36,6 +36,11 @@ jobs:
       - name: Restore (locked)
         run: dotnet restore RPGModder.sln --locked-mode -p:Configuration=Release
 
+      # .gitattributes checks every file out with LF, so one runner is enough (CI-7).
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: dotnet format RPGModder.sln --verify-no-changes --no-restore
+
       - name: Build
         run: dotnet build RPGModder.sln --configuration Release --no-restore
 

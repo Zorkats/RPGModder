@@ -1,8 +1,8 @@
-using System;
-using System.Text.RegularExpressions;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using RPGModder.Core.Services;
+using System;
+using System.Text.RegularExpressions;
 
 namespace RPGModder.UI.Dialogs;
 
@@ -60,7 +60,7 @@ public partial class UpdateDialog : Window
 
         try
         {
-            await _service.DownloadAndInstallAsync(_info.DownloadUrl, progress);
+            await _service.DownloadAndInstallAsync(_info, progress);
         }
         catch (Exception ex)
         {

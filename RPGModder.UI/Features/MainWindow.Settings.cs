@@ -26,7 +26,7 @@ namespace RPGModder.UI;
 
 public partial class MainWindow
 {
-#region Settings
+    #region Settings
 
     private void UpdateCachedGamesCount()
     {
@@ -80,6 +80,6 @@ public partial class MainWindow
 
     #endregion
 
-    
+
 }
 

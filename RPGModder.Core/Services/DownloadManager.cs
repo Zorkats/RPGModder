@@ -1,5 +1,5 @@
-using System.Collections.Concurrent;
 using RPGModder.Core.Models;
+using System.Collections.Concurrent;
 
 namespace RPGModder.Core.Services;
 
@@ -34,8 +34,8 @@ public class DownloadManager : IDisposable
 
     // Queues a download from a Nexus download link
     public async Task<DownloadItem> QueueDownloadAsync(
-        string downloadUrl, 
-        string fileName, 
+        string downloadUrl,
+        string fileName,
         NexusMod? modInfo = null,
         NexusModFile? fileInfo = null)
     {
@@ -131,8 +131,8 @@ public class DownloadManager : IDisposable
                     // Throttle progress updates to every 100ms
                     if ((DateTime.Now - lastProgressUpdate).TotalMilliseconds > 100)
                     {
-                        item.Progress = item.TotalBytes > 0 
-                            ? (double)totalRead / item.TotalBytes * 100 
+                        item.Progress = item.TotalBytes > 0
+                            ? (double)totalRead / item.TotalBytes * 100
                             : 0;
                         DownloadProgress?.Invoke(item);
                         lastProgressUpdate = DateTime.Now;
@@ -196,8 +196,8 @@ public class DownloadManager : IDisposable
     // Clears completed downloads from the list
     public void ClearCompleted()
     {
-        var completed = _downloads.Values.Where(d => 
-            d.Status == DownloadStatus.Completed || 
+        var completed = _downloads.Values.Where(d =>
+            d.Status == DownloadStatus.Completed ||
             d.Status == DownloadStatus.Failed ||
             d.Status == DownloadStatus.Cancelled
         ).ToList();
@@ -279,7 +279,7 @@ public class DownloadItem
     public long DownloadedBytes { get; set; }
     public double Progress { get; set; }
     public string? Error { get; set; }
-    
+
     public DateTime QueuedAt { get; set; }
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
@@ -302,10 +302,10 @@ public class DownloadItem
         {
             if (StartedAt == null || Status != DownloadStatus.Downloading)
                 return "";
-            
+
             var elapsed = (DateTime.Now - StartedAt.Value).TotalSeconds;
             if (elapsed <= 0) return "";
-            
+
             var bytesPerSecond = DownloadedBytes / elapsed;
             return $"{FormatBytes((long)bytesPerSecond)}/s";
         }

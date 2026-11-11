@@ -26,7 +26,7 @@ namespace RPGModder.UI;
 
 public partial class MainWindow
 {
-#region Nexus Mods
+    #region Nexus Mods
 
     private async void InitializeNexusState()
     {
@@ -89,7 +89,7 @@ public partial class MainWindow
     {
         // Disable button to prevent spamming
         BtnNexusConnect.IsEnabled = false;
-        
+
         if (Application.Current?.Resources.TryGetResource("WarningBrush", null, out var warningBrush) == true)
             NexusAuthIndicator.Background = (IBrush)warningBrush!;
 
@@ -130,7 +130,7 @@ public partial class MainWindow
         {
             if (Application.Current?.Resources.TryGetResource("DangerBrush", null, out var dangerBrush) == true)
                 NexusAuthIndicator.Background = (IBrush)dangerBrush!;
-            
+
             TxtNexusStatus.Text = "Login failed or timed out.";
             BtnNexusConnect.IsEnabled = true;
             SetStatus("Nexus SSO authentication failed or was cancelled.", false);
@@ -148,7 +148,7 @@ public partial class MainWindow
         {
             if (Application.Current?.Resources.TryGetResource("SuccessBrush", null, out var successBrush) == true)
                 NexusAuthIndicator.Background = (IBrush)successBrush!;
-            
+
             TxtNexusStatus.Text = $"Connected as {result.User.Name}" + (result.User.IsPremium ? " (Premium)" : "");
             BtnNexusConnect.Content = "Connected";
             BtnNexusConnect.IsEnabled = false;
@@ -185,7 +185,7 @@ public partial class MainWindow
         {
             if (Application.Current?.Resources.TryGetResource("DangerBrush", null, out var dangerBrush) == true)
                 NexusAuthIndicator.Background = (IBrush)dangerBrush!;
-            
+
             TxtNexusStatus.Text = "Connection failed";
             BtnNexusConnect.Content = "Connect"; // Changed from Retry to Connect for SSO
             BtnNexusConnect.IsEnabled = true;
@@ -782,8 +782,8 @@ public partial class MainWindow
         _settings.Save();
 
         // Clear API instance state instead of destroying the HttpClient
-        _nexus.ClearAuth(); 
-        
+        _nexus.ClearAuth();
+
         // Revert UI Polish
         TxtNexusApiKey.Text = "";
         TxtNexusApiKey.IsReadOnly = false;
@@ -795,7 +795,7 @@ public partial class MainWindow
         // Reset Auth UI in Nexus Tab
         if (Application.Current?.Resources.TryGetResource("DangerBrush", null, out var dangerBrush) == true)
             NexusAuthIndicator.Background = (IBrush)dangerBrush!;
-        
+
         TxtNexusStatus.Text = "Not connected";
         BtnNexusConnect.Content = "Login with Nexus Mods";
         BtnNexusConnect.IsEnabled = true;
@@ -866,6 +866,6 @@ public partial class MainWindow
 
     #endregion
 
-    
+
 }
 

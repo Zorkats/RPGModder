@@ -11,7 +11,7 @@
         <Version>2.0.0</Version>
         <FileVersion>2.0.0</FileVersion>
         <AssemblyVersion>2.0.0</AssemblyVersion>
-        <Authors>Vicente</Authors>
+        <Authors>Zorkats</Authors>
         <Company>RPGModder</Company>
         <Product>RPGModder</Product>
 
@@ -20,6 +20,9 @@
         <PublishSingleFile Condition="'$(RuntimeIdentifier)' != ''">true</PublishSingleFile>
         <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
         <IncludeNativeLibrariesForSelfExtract Condition="'$(RuntimeIdentifier)' != ''">true</IncludeNativeLibrariesForSelfExtract>
+        <!-- The single-file analyzer pulls in Microsoft.NET.ILLink.Tasks, whose version follows the SDK patch. Without it the
+             publish restores the same packages as the solution, so the release restores against the lock files (CI-2). -->
+        <EnableSingleFileAnalyzer Condition="'$(RuntimeIdentifier)' != ''">false</EnableSingleFileAnalyzer>
     </PropertyGroup>
 
     <ItemGroup>

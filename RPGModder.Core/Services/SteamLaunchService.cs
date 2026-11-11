@@ -1,10 +1,10 @@
+using RPGModder.Core.Platform;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
-using RPGModder.Core.Platform;
 
 namespace RPGModder.Core.Services;
 
@@ -136,7 +136,7 @@ public class SteamLaunchService : IStoreLinkOpener
         try
         {
             var content = File.ReadAllText(manifestPath);
-            
+
             // Extract installdir
             var installDirMatch = Regex.Match(content, @"""installdir""\s+""([^""]+)""");
             if (installDirMatch.Success)
@@ -146,7 +146,7 @@ public class SteamLaunchService : IStoreLinkOpener
                 if (manifestDir != null)
                 {
                     var gamePath = Path.Combine(manifestDir, "common", installDir);
-                    
+
                     // Check if this manifest is for our game
                     if (Path.GetFullPath(gamePath).Equals(Path.GetFullPath(gameRoot), PlatformService.PathComparison))
                     {

@@ -1,6 +1,6 @@
-using System.Security.Cryptography;
 using RPGModder.Core.Platform;
 using RPGModder.Tests.Support;
+using System.Security.Cryptography;
 
 namespace RPGModder.Tests.Platform;
 

@@ -1,12 +1,12 @@
 ﻿using Avalonia.Controls;
 using Avalonia.Interactivity;
+using RPGModder.Core.Application;
+using RPGModder.Core.Models;
 using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using RPGModder.Core.Application;
-using RPGModder.Core.Models;
 
 namespace RPGModder.UI.Dialogs;
 

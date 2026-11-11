@@ -9,6 +9,7 @@ using Newtonsoft.Json;
 using RPGModder.Core.Application;
 using RPGModder.Core.Models;
 using RPGModder.Core.Services;
+using RPGModder.Core.Workspace;
 using RPGModder.UI.Dialogs;
 using System;
 using System.Collections.Generic;
@@ -21,13 +22,12 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
-using RPGModder.Core.Workspace;
 
 namespace RPGModder.UI;
 
 public partial class MainWindow
 {
-#region Save Manager
+    #region Save Manager
 
     private async void BtnSaveManager_Click(object? sender, RoutedEventArgs e)
     {
@@ -39,7 +39,7 @@ public partial class MainWindow
 
     #endregion
 
-#region Helpers
+    #region Helpers
 
     private void SetStatus(string message, bool success)
     {

@@ -1,4 +1,3 @@
-using System.Runtime.Versioning;
 using Newtonsoft.Json;
 using RPGModder.Core.Application;
 using RPGModder.Core.Models;
@@ -6,6 +5,7 @@ using RPGModder.Core.Operations;
 using RPGModder.Core.Platform;
 using RPGModder.Core.Services;
 using RPGModder.Core.Workspace;
+using System.Runtime.Versioning;
 
 namespace RPGModder.Tests;
 

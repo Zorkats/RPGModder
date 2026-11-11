@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -5,9 +6,11 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Newtonsoft.Json;
+using RPGModder.Core.Application;
 using RPGModder.Core.Models;
 using RPGModder.Core.Services;
-using RPGModder.Core.Application;
+using RPGModder.Core.Workspace;
+using RPGModder.UI.Dialogs;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -19,9 +22,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
-using Avalonia;
-using RPGModder.UI.Dialogs;
-using RPGModder.Core.Workspace;
 
 namespace RPGModder.UI;
 
@@ -62,7 +62,7 @@ public partial class MainWindow : Window
     private string? _tempExtractPath;
     private CancellationTokenSource? _scanCts;
     private CancellationTokenSource? _nexusCts; // Cancels in-flight Nexus API calls
-    
+
     // Nexus game linking
     private NexusGameMapping? _currentNexusGame;
     private string _detectedGameName = "";
@@ -134,8 +134,10 @@ public partial class MainWindow : Window
         CtxLinkNexus.Click += CtxLinkNexus_Click;
         CtxCheckUpdate.Click += CtxCheckUpdate_Click;
         CtxDownloadUpdate.Click += CtxDownloadUpdate_Click;
-        LstMods.SelectionChanged += (s, e) => {
-            if (LstMods.SelectedItem is ModListItem mod) {
+        LstMods.SelectionChanged += (s, e) =>
+        {
+            if (LstMods.SelectedItem is ModListItem mod)
+            {
                 CtxDownloadUpdate.IsVisible = mod.UpdateAvailable;
                 CtxCheckUpdate.IsVisible = mod.Manifest?.Metadata?.NexusId != null && mod.Manifest.Metadata.NexusId > 0;
                 ModInspector.DataContext = mod;

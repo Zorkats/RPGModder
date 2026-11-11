@@ -28,7 +28,7 @@ namespace RPGModder.UI;
 
 public partial class MainWindow
 {
-#region Mod Installation
+    #region Mod Installation
 
     private async void MenuInstallZip_Click(object? sender, RoutedEventArgs e)
     {
@@ -117,8 +117,8 @@ public partial class MainWindow
 
     #endregion
 
-    
-#region Mod List Management
+
+    #region Mod List Management
 
     private void RefreshModList()
     {
@@ -249,8 +249,8 @@ public partial class MainWindow
 
     #endregion
 
-    
-#region Mod Actions
+
+    #region Mod Actions
 
     private async void BtnRebuild_Click(object? sender, RoutedEventArgs e)
     {
@@ -405,8 +405,8 @@ public partial class MainWindow
 
     #endregion
 
-    
-#region Drag & Drop
+
+    #region Drag & Drop
 
     private void DropZone_DragOver(object? sender, DragEventArgs e)
     {
@@ -435,7 +435,7 @@ public partial class MainWindow
 
     #endregion
 
-    
+
 
     #region  Search & Filter
 
@@ -476,8 +476,8 @@ public partial class MainWindow
 
     #endregion
 
-    
-#region Helpers for Mod Updating
+
+    #region Helpers for Mod Updating
 
     private CancellationTokenSource? _updateCheckCts;
 
@@ -511,7 +511,8 @@ public partial class MainWindow
 
                     if (modInfo != null && VersionComparer.IsNewerVersion(mod.Version, modInfo.Version))
                     {
-                        Dispatcher.UIThread.Post(() => {
+                        Dispatcher.UIThread.Post(() =>
+                        {
                             mod.UpdateAvailable = true;
                             mod.LatestVersion = modInfo.Version;
                             // If this item is currently selected, reveal the context menu button
@@ -664,8 +665,8 @@ public partial class MainWindow
 
     #endregion
 
-    
-#region Context Menu
+
+    #region Context Menu
 
     private ModListItem? GetSelectedMod()
     {
@@ -820,7 +821,7 @@ public partial class MainWindow
 
     #endregion
 
-    
+
 
     #region Drag-Drop Reordering
 
@@ -920,8 +921,8 @@ public partial class MainWindow
 
     #endregion
 
-    
-#region Context Menu Remove
+
+    #region Context Menu Remove
 
     private async void CtxRemove_Click(object? sender, RoutedEventArgs e)
     {
@@ -980,6 +981,6 @@ public partial class MainWindow
 
     #endregion
 
-    
+
 }
 

@@ -85,6 +85,15 @@ Download the appropriate self-contained package from the [Releases Page](https:/
 3. Run `packaging/linux/install.sh` for a per-user installation, or launch `./RPGModder` directly for portable use.
 4. Register `nxm://` from **Settings** if the installer did not register it automatically.
 
+### Check your download
+
+Releases are not code signed, so Windows SmartScreen may warn the first time you start RPGModder. Before choosing **More info**, then **Run anyway**, check the package against `SHA256SUMS` from the same release:
+
+* Windows (PowerShell): `Get-FileHash .\RPGModder-<version>-win-x64.zip -Algorithm SHA256`, then compare with the line in `SHA256SUMS`.
+* Linux: `sha256sum -c --ignore-missing SHA256SUMS`.
+
+[docs/verify-your-download.md](docs/verify-your-download.md) has the details. The built-in updater runs this check by itself.
+
 Linux API keys are stored through the desktop Secret Service using `secret-tool`; RPGModder refuses to persist them as plaintext when secure storage is unavailable. Steam and Flatpak Steam libraries are detected, and Windows RPG Maker releases are launched through Steam/Proton when an AppID is available.
 
 ### Linux development and handheld testing
@@ -108,6 +117,8 @@ PREBUILT_DIR=artifacts/linux-x64/RPGModder-2.0.0-linux-x64 \
   ./packaging/linux/package.sh 2.0.0
 ```
 
+The script needs the version and writes both the `.tar.gz` and the `.zip` (it needs `zip`). Releases are built by GitHub Actions from a `v<version>` tag; see [devdocs/releasing.md](devdocs/releasing.md).
+
 ---
 
 ## 📖 Usage Guide
@@ -125,6 +136,8 @@ PREBUILT_DIR=artifacts/linux-x64/RPGModder-2.0.0-linux-x64 \
 ---
 
 ## Why does this mod manager exist instead of using FHMM?
+
+Mod authors: [docs/fhmm-mods-for-authors.md](docs/fhmm-mods-for-authors.md) explains which FHMM mods run as they are and which can be republished as plain RPGModder mods.
 
 * This began as a simple project to make a mod manager for Look Outside (my favorite RPG Maker game!) and it turned out to be much bigger as I kept going. I hope people give it a chance, it would make me very happy if modders use it. 
 

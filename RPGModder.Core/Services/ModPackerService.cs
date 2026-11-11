@@ -1,11 +1,11 @@
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using RPGModder.Core.Models;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-using RPGModder.Core.Models;
 
 namespace RPGModder.Core.Services;
 
@@ -242,7 +242,7 @@ public class ModPackerService
     // Fields in System.json that should NEVER be captured by the packer (usually user-specific settings)
     private static readonly HashSet<string> ExcludedSystemFields = new(StringComparer.OrdinalIgnoreCase)
     {
-        "screenWidth", "screenHeight", "uiAreaWidth", "uiAreaHeight", 
+        "screenWidth", "screenHeight", "uiAreaWidth", "uiAreaHeight",
         "windowLineWidth", "locale", "title1Name", "title2Name"
     };
 

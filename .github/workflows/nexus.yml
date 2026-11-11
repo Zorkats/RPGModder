@@ -1,0 +1,92 @@
+name: Nexus upload
+
+# Uploads one package of a published release to one Nexus Mods file (CI-13).
+# Started by hand only. The job runs in the protected "nexus" environment, which needs a
+# reviewer's approval and holds the NEXUS_API_KEY secret; no push, pull request or tag
+# workflow can read it. Run it once per Nexus file (each game page has its own file id).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to upload, for example v2.1.0
+        required: true
+        type: string
+      package:
+        description: Package to upload
+        required: true
+        type: choice
+        options:
+          - win-x64.zip
+          - linux-x64.tar.gz
+          - linux-x64.zip
+      file_id:
+        description: Nexus Mods file id that receives the new version
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexus-upload
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    name: Upload to Nexus Mods
+    runs-on: ubuntu-latest
+    environment: nexus
+    env:
+      TAG: ${{ inputs.tag }}
+      PACKAGE: ${{ inputs.package }}
+      FILE_ID: ${{ inputs.file_id }}
+    outputs:
+      version_id: ${{ steps.upload.outputs.version_id }}
+    steps:
+      - name: Check inputs
+        id: names
+        run: |
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "::error::The tag must look like v2.1.0."; exit 1 ;;
+          esac
+          case "$TAG" in
+            *[!0-9A-Za-z.+-]*) echo "::error::The tag has unexpected characters."; exit 1 ;;
+          esac
+          case "$FILE_ID" in
+            ''|*[!0-9]*) echo "::error::The Nexus file id must be a number."; exit 1 ;;
+          esac
+          version="${TAG#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "asset=RPGModder-$version-$PACKAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Download the package and SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: ${{ steps.names.outputs.asset }}
+        run: |
+          mkdir dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist --pattern "$ASSET" --pattern SHA256SUMS
+
+      - name: Verify the package against SHA256SUMS
+        working-directory: dist
+        env:
+          ASSET: ${{ steps.names.outputs.asset }}
+        run: |
+          line=$(awk -v name="$ASSET" '$2 == name || $2 == "*" name' SHA256SUMS)
+          if [ "$(printf '%s\n' "$line" | grep -c .)" != "1" ]; then
+            echo "::error::SHA256SUMS does not list $ASSET exactly once."
+            exit 1
+          fi
+          printf '%s\n' "$line" | sha256sum -c -
+
+      - name: Upload
+        id: upload
+        uses: Nexus-Mods/upload-action@98532f7670c27cbecc78fae03fa3e278147827e2 # v1.0.0-beta.11
+        with:
+          api_key: ${{ secrets.NEXUS_API_KEY }}
+          file_id: ${{ inputs.file_id }}
+          filename: dist/${{ steps.names.outputs.asset }}
+          version: ${{ steps.names.outputs.version }}
+          display_name: ${{ steps.names.outputs.asset }}

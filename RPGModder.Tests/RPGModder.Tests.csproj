@@ -25,6 +25,12 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!-- The release contract tests (TST-14, CI-17) read the files that produce the asset names. -->
+        <None Include="..\.github\workflows\release.yml" Link="Contracts\release.yml" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\packaging\linux\package.sh" Link="Contracts\package.sh" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <ItemGroup>
       <ProjectReference Include="..\RPGModder.Core\RPGModder.Core.csproj" />
     </ItemGroup>
 

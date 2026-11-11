@@ -60,7 +60,7 @@ public class SettingsService
             {
                 var json = File.ReadAllText(_gamesCache);
                 CachedGames = JsonConvert.DeserializeObject<List<DetectedGame>>(json) ?? new List<DetectedGame>();
-                
+
                 // Validate cached games still exist
                 CachedGames = CachedGames.Where(g => File.Exists(g.ExePath)).ToList();
             }
@@ -156,15 +156,15 @@ public class AppSettings
     public string? LastGamePath { get; set; }
     public bool AutoScanOnStartup { get; set; } = false;
     public DateTime LastScanTime { get; set; }
-    
+
     // Nexus Mods settings
     public string? NexusApiKey { get; set; }
     public bool IsSsoAuthenticated { get; set; } = false;
     public bool NxmProtocolRegistered { get; set; } = false;
-    
+
     // Game to Nexus domain mappings (game exe path -> nexus domain)
     public Dictionary<string, NexusGameMapping> NexusGameMappings { get; set; } = new();
-    
+
     // Mod management settings
     public bool SmartMergeEnabled { get; set; } = true;
     public bool ConfirmBeforeRemove { get; set; } = true;
