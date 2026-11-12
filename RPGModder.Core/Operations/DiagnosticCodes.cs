@@ -39,11 +39,15 @@ public static class DiagnosticCodes
     public const string MergeParseFailed = "merge.parse_failed";
     public const string MergeBaseParseFailed = "merge.base_parse_failed";
     public const string MergePatchTargetMissing = "merge.patch_target_missing";
+    public const string MergePatchShapeMismatch = "merge.patch_shape_mismatch";
+    public const string MergeRootShapeMismatch = "merge.root_shape_mismatch";
+    public const string MergeConfigSaveUnsupported = "merge.config_save_unsupported";
 
     public const string RulesResolutionReused = "rules.resolution_reused";
     public const string RulesScopeReduced = "rules.scope_reduced";
     public const string RulesRemapApplied = "rules.remap_applied";
     public const string RulesRemapUnchecked = "rules.remap_unchecked";
+    public const string RulesRemapTargetTaken = "rules.remap_target_taken";
     public const string RulesSwitchBandMoved = "rules.switch_band_moved";
     public const string RulesSwitchBandExhausted = "rules.switch_band_exhausted";
 

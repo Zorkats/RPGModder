@@ -1,0 +1,18 @@
+[
+    {
+        "id": "cbc010b0587cd952",
+        "kind": "IdClash",
+        "file": "data/items.json",
+        "record": "id:3",
+        "path": "",
+        "mods": [
+            "a-ash",
+            "b-birch"
+        ],
+        "blocking": true,
+        "allowed": [
+            "PickMod",
+            "DisableMod"
+        ]
+    }
+]

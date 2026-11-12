@@ -1,0 +1,18 @@
+[
+    {
+        "id": "823a86e9e08b7435",
+        "kind": "DeleteVersusEdit",
+        "file": "data/items.json",
+        "record": "id:1",
+        "path": "",
+        "mods": [
+            "a-ash",
+            "b-birch"
+        ],
+        "blocking": true,
+        "allowed": [
+            "PickMod",
+            "PickVanilla"
+        ]
+    }
+]
