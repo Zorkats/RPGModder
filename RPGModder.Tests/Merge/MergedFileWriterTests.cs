@@ -36,7 +36,7 @@ public sealed class MergedFileWriterTests
     }
 
     [Fact]
-    public void RemovedRecords_BecomeNull_AndATrailingRunIsCut()
+    public void RemovedRecords_BecomeBlank_AndATrailingRunIsCut()
     {
         const string vanilla = "[null,{\"id\":1},{\"id\":2},{\"id\":3}]";
         BaseFileSet bases = Bases(Base("data/Weapons.json", vanilla));
@@ -44,7 +44,8 @@ public sealed class MergedFileWriterTests
         MergedFile middle = Assert.Single(Write(bases, null, FileMod("a-tin", "data/Weapons.json", "[null,{\"id\":1},null,{\"id\":3}]")));
         MergedFile tail = Assert.Single(Write(bases, null, FileMod("a-tin", "data/Weapons.json", "[null,{\"id\":1}]")));
 
-        Assert.Equal("[null,{\"id\":1},null,{\"id\":3}]", middle.Text);
+        // GR-R8: the hole takes the blank weapon with its own id.
+        Assert.Equal("[null,{\"id\":1},{\"id\":2,\"animationId\":0,\"description\":\"\",\"etypeId\":1,\"traits\":[{\"code\":31,\"dataId\":1,\"value\":0},{\"code\":22,\"dataId\":0,\"value\":0}],\"iconIndex\":0,\"name\":\"\",\"note\":\"\",\"params\":[0,0,0,0,0,0,0,0],\"price\":0,\"wtypeId\":0},{\"id\":3}]", middle.Text);
         Assert.Equal("[null,{\"id\":1}]", tail.Text);
     }
 
@@ -210,7 +211,7 @@ public sealed class MergedFileWriterTests
     }
 
     [Fact]
-    public void RemovedRecordBeforeAnAddedOne_StaysAsNull()
+    public void RemovedRecordBeforeAnAddedOne_BecomesBlank()
     {
         BaseFileSet bases = Bases(Base(Items, VanillaItems));
         ModSource removal = FileMod("a-tin", Items, EditItems(items => items[2] = JValue.CreateNull()));
@@ -219,7 +220,8 @@ public sealed class MergedFileWriterTests
         JArray written = JArray.Parse(Assert.Single(Write(bases, null, removal, addition)).Text!);
 
         Assert.Equal(4, written.Count);
-        Assert.Equal(JTokenType.Null, written[2].Type);
+        Assert.Equal(2, written[2]["id"]!.Value<int>());
+        Assert.Equal("", written[2]["name"]!.Value<string>());
         Assert.Equal(new JObject { ["id"] = 3 }, written[3]);
     }
 

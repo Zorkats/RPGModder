@@ -5,7 +5,8 @@ internal static class RemapPlaces
 {
     /// <summary>
     /// True when <paramref name="remap"/> moves the id <paramref name="collision"/> is about: a map event is the
-    /// record <c>event:n</c> of its map; a map is its file on <c>*</c> and its <c>MapInfos</c> record.
+    /// record <c>event:n</c> of its map; a map is its file on <c>*</c> and its <c>MapInfos</c> record; a database
+    /// record is the record <c>id:n</c> of its file.
     /// </summary>
     public static bool Settles(IdRemap remap, Collision collision)
     {
@@ -20,7 +21,7 @@ internal static class RemapPlaces
             IdKind.MapEvent => key.File == remap.Scope && key.Record == RecordKey.ForEvent(remap.FromId),
             IdKind.Map => (key.File == RpgDataSchema.MapKey(remap.FromId) && key.IsWholeFile) ||
                           (key.File == RpgDataSchema.MapInfosKey && key.Record == RecordKey.ForIndex(remap.FromId)),
-            _ => false
+            _ => RpgDataSchema.DatabaseFileOf(remap.Kind) is { } file && key.File == file && key.Record == RecordKey.ForIndex(remap.FromId)
         };
     }
 }

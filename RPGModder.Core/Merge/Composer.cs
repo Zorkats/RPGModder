@@ -59,7 +59,7 @@ public static class Composer
         var ops = new List<MergedOp>();
         var collisions = new List<(Collision Collision, CollisionOutcome Outcome)>();
         IReadOnlyList<IdRemap> offers = remapPlan?.Offers ?? [];
-        foreach (List<OpGroup> cluster in Cluster(Group(ordered)))
+        foreach (List<OpGroup> cluster in Cluster(DropFiller(Group(ordered), changeSets, priorities)))
         {
             ComposeCluster(cluster, choices, priorities, offers, ops, collisions, diagnostics);
         }
@@ -110,6 +110,32 @@ public static class Composer
         }
 
         return groups.Values.ToList();
+    }
+
+    /// <summary>
+    /// GR-R7: filler yields to a real record at the same id and never forms an <c>IdClash</c>. Where every variant
+    /// adds a database record, the filler variants drop when a real one is there; when none is, only the variant of
+    /// the mod latest in profile order stays.
+    /// </summary>
+    private static List<OpGroup> DropFiller(List<OpGroup> groups, IReadOnlyList<ModChangeSet> changeSets, Dictionary<string, int> priorities)
+    {
+        Dictionary<string, FillerTest> fillers = changeSets.ToDictionary(set => set.ModId, set => new FillerTest(set), StringComparer.Ordinal);
+        foreach (OpGroup group in groups)
+        {
+            if (group.Path.Length != 0 ||
+                group.Variants.Count < 2 ||
+                RpgDataSchema.DatabaseKindOf(group.Key.File) is null ||
+                group.Variants.Any(variant => variant.Op.Kind != ChangeKind.AddRecord))
+            {
+                continue;
+            }
+
+            List<Variant> real = group.Variants.Where(variant => !fillers[variant.Op.ModId].IsFiller(group.Key, variant.Op.Value)).ToList();
+            List<Variant> kept = real.Count > 0 ? real : [LatestInProfileOrder(group, priorities)];
+            group.Variants.RemoveAll(variant => !kept.Contains(variant));
+        }
+
+        return groups;
     }
 
     /// <summary>

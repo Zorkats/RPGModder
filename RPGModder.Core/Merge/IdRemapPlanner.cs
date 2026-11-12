@@ -2,28 +2,37 @@ using Newtonsoft.Json.Linq;
 using RPGModder.Core.Models;
 using RPGModder.Core.Operations;
 using RPGModder.Core.Services;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 
 namespace RPGModder.Core.Merge;
 
 /// <summary>
-/// Decides which added ids move before composition (guide 3.11, GR-R3 to GR-R12). Step 1 plans the
-/// <see cref="IdKind.MapEvent"/> and <see cref="IdKind.Map"/> kinds. The result does not depend on the order of any
-/// input.
+/// Decides which added ids move before composition (guide 3.11, GR-R3 to GR-R12): map events, maps and the twelve
+/// database kinds. The result does not depend on the order of any input.
 /// </summary>
 public static class IdRemapPlanner
 {
+    /// <summary>Trait 55, Slot Type, whose data 1 is Dual Wield (MV and MZ <c>Game_Actor.prototype.isDualWield</c>).</summary>
+    private const int SlotTypeTrait = 55;
+
+    private const int DualWieldSlot = 1;
+    private const string TraitCode = "code";
+    private const string TraitData = "dataId";
+
     /// <param name="installed">Every installed mod, enabled or not, once each.</param>
     /// <param name="recorded">The profile's <c>Remaps</c>, every entry, active or not.</param>
     /// <param name="deployedMods">The profile's <c>DeployedMods</c> (GR-R4).</param>
     /// <param name="baseFiles">
     /// Vanilla's files, for the ids vanilla uses (GR-R5): the map file of every map that gets an event, and, when a
-    /// mod adds a map, <c>data/MapInfos.json</c> and every vanilla map file, listed in the tree or not. A clash whose
-    /// base file is missing cannot move, and a map id whose file vanilla has is never a target and never moves.
+    /// mod adds a map, <c>data/MapInfos.json</c> and every vanilla map file, listed in the tree or not; the database
+    /// file of every kind a mod adds a record to; and, to tell a dual-wield game (trait 55, data 1), the actors,
+    /// classes, weapons, armors and states. A clash whose base file is missing cannot move, a map id whose file
+    /// vanilla has is never a target and never moves, and a missing dual-wield file counts as dual wield.
     /// </param>
     /// <param name="engine">
-    /// The game's engine, which sets the highest map id a move may give (GR-R6): 2000 for MZ, 999 for MV and for an
-    /// unknown engine (<c>null</c>).
+    /// The game's engine, which sets the highest id a move may give (GR-R6): maps 2000 on MZ and 999 otherwise,
+    /// database records 9999 on MZ and 999 otherwise, events 999. An unknown engine (<c>null</c>) gets MV's limits.
     /// </param>
     public static RemapPlan Plan(
         IReadOnlyList<RemapMod> installed,
@@ -55,7 +64,7 @@ public static class IdRemapPlanner
         foreach (RemapMod mod in mods.Where(item => item.Enabled))
         {
             string modId = mod.ChangeSet.ModId;
-            foreach (AddedId id in added[modId])
+            foreach (AddedId id in added[modId].Where(item => !item.IsFiller))
             {
                 bool pinned = pins.TryGetValue((modId, id.Kind, id.Scope, id.Id), out int toId);
                 claims.Add(new Claim(mod, id, pinned ? toId : id.Id, pinned, deployed.Contains(modId)));
@@ -64,6 +73,8 @@ public static class IdRemapPlanner
 
         var targets = new Targets(added.Values.SelectMany(list => list).ToList(), recorded, baseFiles, engine);
         var references = new Dictionary<string, ModReferences>(StringComparer.Ordinal);
+        var dualWield = new Lazy<bool>(() => IsDualWield(mods, baseFiles));
+        StaleReferences(mods, pins, mod => ReferencesOf(mod, dualWield, engine, references), diagnostics);
         var moves = new List<IdRemap>();
         var offers = new List<IdRemap>();
         IEnumerable<IGrouping<(IdKind Kind, string Scope, int Id), Claim>> groups = claims
@@ -82,7 +93,7 @@ public static class IdRemapPlanner
             (IdKind kind, string scope, _) = group.Key;
             foreach (Party party in parties)
             {
-                party.Classify(kind, claim => ReferencesOf(claim.Mod, references), claim => IsVanillaMapFile(kind, claim.Added.Id, baseFiles));
+                party.Classify(kind, claim => ReferencesOf(claim.Mod, dualWield, engine, references), claim => IsVanillaMapFile(kind, claim.Added.Id, baseFiles));
             }
 
             // GR-R4 and GR-R10: the parties that cannot move stay; when every party can, the first in order stays.
@@ -154,7 +165,7 @@ public static class IdRemapPlanner
         foreach (IdRemap remap in Sorted(recorded))
         {
             (string ModId, IdKind Kind, string Scope, int FromId) from = (remap.ModId, remap.Kind, remap.Scope, remap.FromId);
-            if (remap.Kind is not (IdKind.MapEvent or IdKind.Map) || remap.ToId <= 0 || !enabled.Contains(remap.ModId) ||
+            if (!RpgDataSchema.IsRemappable(remap.Kind) || remap.ToId <= 0 || !enabled.Contains(remap.ModId) ||
                 !AddedIdIndex.IsActive(remap, added[remap.ModId]) || pins.ContainsKey(from) ||
                 !targets.Add((remap.ModId, remap.Kind, remap.Scope, remap.ToId)))
             {
@@ -187,7 +198,38 @@ public static class IdRemapPlanner
         return pins;
     }
 
-    /// <summary>True when vanilla has a record at <paramref name="id"/>: a map file or tree record, or a map's event.</summary>
+    /// <summary>
+    /// GR-R12 over GR-R9 (the owner, 2026-11-12): an entry in force still applies when its mod now names the old id
+    /// where a move cannot follow it (a mod update), since saves already hold the new id. The plan says so with
+    /// <c>rules.remap_stale_reference</c>, one per entry, in the order of <see cref="Sorted"/>.
+    /// </summary>
+    private static void StaleReferences(
+        List<RemapMod> mods,
+        Dictionary<(string ModId, IdKind Kind, string Scope, int FromId), int> pins,
+        Func<RemapMod, ModReferences> referencesOf,
+        List<OperationDiagnostic> diagnostics)
+    {
+        IEnumerable<IdRemap> standing = pins.Select(pin => new IdRemap(pin.Key.ModId, pin.Key.Kind, pin.Key.Scope, pin.Key.FromId, pin.Value));
+        foreach (IdRemap remap in Sorted(standing))
+        {
+            RemapMod mod = mods.First(item => item.ChangeSet.ModId == remap.ModId);
+            if (!referencesOf(mod).Blocks(remap.Kind, remap.FromId))
+            {
+                continue;
+            }
+
+            string where = remap.Kind == IdKind.MapEvent ? " in " + remap.Scope : "";
+            diagnostics.Add(new OperationDiagnostic(
+                DiagnosticCodes.RulesRemapStaleReference,
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"Mod {remap.ModId}: {remap.Kind} {remap.FromId}{where} was recorded as moved to {remap.ToId}, but the mod now names {remap.FromId} where a move cannot follow it (a script, a note, a formula, a plugin's text code or a value of unclear kind). The entry still applies, so saves keep the record, but that place still reads {remap.FromId}."),
+                DiagnosticSeverity.Warning,
+                remap.ModId));
+        }
+    }
+
+    /// <summary>True when vanilla has a record at <paramref name="id"/>: a map file or tree record, a map's event, a database record.</summary>
     private static bool VanillaUses(IdKind kind, string scope, int id, BaseFileSet baseFiles)
     {
         if (kind == IdKind.Map && baseFiles.Find(RpgDataSchema.MapKey(id)) is not null)
@@ -198,17 +240,60 @@ public static class IdRemapPlanner
         return VanillaList(kind, scope, baseFiles) is JArray list && id < list.Count && list[id].Type != JTokenType.Null;
     }
 
-    /// <summary>Vanilla's list for a kind and scope, holes included: the map tree for maps, a map's events for events.</summary>
+    /// <summary>
+    /// Vanilla's list for a kind and scope, holes included: the map tree for maps, a map's events for events, the
+    /// database file for a database kind.
+    /// </summary>
     private static JArray? VanillaList(IdKind kind, string scope, BaseFileSet baseFiles)
     {
-        string file = kind == IdKind.Map ? RpgDataSchema.MapInfosKey : scope;
-        BaseFile? baseFile = baseFiles.Find(file);
-        if (baseFile is null || !ChangeSetBuilder.TryReadBase(baseFile, out JToken? root, out _))
+        string? file = kind switch
+        {
+            IdKind.Map => RpgDataSchema.MapInfosKey,
+            IdKind.MapEvent => scope,
+            _ => RpgDataSchema.DatabaseFileOf(kind)
+        };
+        if (file is null || !TryReadBase(baseFiles, file, out JToken? root))
         {
             return null;
         }
 
-        return (kind == IdKind.Map ? root : (root as JObject)?[RpgDataSchema.EventsProperty]) as JArray;
+        return (kind == IdKind.MapEvent ? (root as JObject)?[RpgDataSchema.EventsProperty] : root) as JArray;
+    }
+
+    /// <summary>
+    /// True when an actor may wield two weapons, so the second equip slot may hold a weapon: a trait 55 with data 1
+    /// in vanilla's or an enabled mod's actors, classes, weapons, armors or states. A file vanilla lacks or that cannot
+    /// be read counts as dual wield, the side on which fewer ids move.
+    /// </summary>
+    private static bool IsDualWield(List<RemapMod> mods, BaseFileSet baseFiles)
+    {
+        IdKind[] kinds = [IdKind.Actor, IdKind.Class, IdKind.Weapon, IdKind.Armor, IdKind.State];
+        var files = new HashSet<string>(kinds.Select(kind => RpgDataSchema.DatabaseFileOf(kind)!), StringComparer.Ordinal);
+        foreach (string file in files)
+        {
+            if (!TryReadBase(baseFiles, file, out JToken? root) || HasDualWield(root))
+            {
+                return true;
+            }
+        }
+
+        return mods.Where(mod => mod.Enabled)
+            .SelectMany(mod => mod.ChangeSet.Ops)
+            .Any(op => files.Contains(op.Key.File) && op.Value is not null && HasDualWield(op.Value));
+    }
+
+    private static bool HasDualWield(JToken token)
+    {
+        return token is JContainer container && container.DescendantsAndSelf().OfType<JObject>().Any(item =>
+            item[TraitCode] is JValue { Value: long code } && code == SlotTypeTrait &&
+            item[TraitData] is JValue { Value: long data } && data == DualWieldSlot);
+    }
+
+    private static bool TryReadBase(BaseFileSet baseFiles, string file, [NotNullWhen(true)] out JToken? root)
+    {
+        root = null;
+        BaseFile? baseFile = baseFiles.Find(file);
+        return baseFile is not null && ChangeSetBuilder.TryReadBase(baseFile, out root, out _);
     }
 
     /// <summary>GR-R3: claims with equal content are one party, because their ops fold into one.</summary>
@@ -244,11 +329,15 @@ public static class IdRemapPlanner
         return kind == IdKind.Map && baseFiles.Find(RpgDataSchema.MapKey(id)) is not null;
     }
 
-    private static ModReferences ReferencesOf(RemapMod mod, Dictionary<string, ModReferences> cache)
+    private static ModReferences ReferencesOf(
+        RemapMod mod,
+        Lazy<bool> dualWield,
+        RpgMakerEngine? engine,
+        Dictionary<string, ModReferences> cache)
     {
         if (!cache.TryGetValue(mod.ChangeSet.ModId, out ModReferences? found))
         {
-            found = ReferenceMap.Scan(mod.ChangeSet, mod.PluginScripts);
+            found = ReferenceMap.Scan(mod.ChangeSet, mod.PluginScripts, dualWield.Value, engine == RpgMakerEngine.MZ);
             cache.Add(mod.ChangeSet.ModId, found);
         }
 

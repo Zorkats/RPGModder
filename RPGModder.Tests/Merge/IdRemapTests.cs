@@ -171,7 +171,8 @@ public sealed class IdRemapTests
             FileMod("b-oak", Map, MapWith(NewEvent(3, "Merchant", reference), map => FirstList(map, 1).Insert(0, reference.DeepClone())), 1),
             MapBases);
 
-        RemapPlan plan = Plan(MapBases, first, second);
+        // The rows as MZ reads them: 285 by character is MZ's only (IdRemapDatabaseTests reads it on MV).
+        RemapPlan plan = Plan(RpgMakerEngine.MZ, MapBases, first, second);
         ModChangeSet moved = ApplyOwn(plan, second);
 
         Assert.Equal(["b-oak|MapEvent|data/map001.json|3>4"], plan.NewEntries.Select(Entry));

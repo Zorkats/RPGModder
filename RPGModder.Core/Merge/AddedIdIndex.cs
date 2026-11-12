@@ -5,14 +5,17 @@ namespace RPGModder.Core.Merge;
 /// <summary>
 /// The ids a change set adds, by kind and scope (GR-R2, GR-R3). An op the builder writes for a record vanilla does
 /// not have is the only kind of added id: a map event is an <c>AddRecord</c> on <c>event:n</c> of a vanilla map; a
-/// map is a whole new <c>MapNNN.json</c>, its <c>MapInfos</c> record, or both. Step 1 lists these two kinds only.
+/// map is a whole new <c>MapNNN.json</c>, its <c>MapInfos</c> record, or both; a database record is an
+/// <c>AddRecord</c> on <c>id:n</c> of its file.
 /// </summary>
 internal static class AddedIdIndex
 {
     public static IReadOnlyList<AddedId> Of(ModChangeSet changeSet)
     {
         var events = new List<AddedId>();
+        var records = new List<AddedId>();
         var maps = new SortedDictionary<int, (JToken? File, JToken? Info)>();
+        var filler = new FillerTest(changeSet);
         foreach (ChangeOp op in changeSet.Ops)
         {
             if (op.Kind != ChangeKind.AddRecord || op.Path.Length != 0 || op.Value is null)
@@ -32,9 +35,14 @@ internal static class AddedIdIndex
             {
                 events.Add(new AddedId(IdKind.MapEvent, op.Key.File, eventId, op.Value));
             }
+            else if (RpgDataSchema.DatabaseKindOf(op.Key.File) is { } kind && RecordKey.TryGetIndex(op.Key.Record, out int recordId) && recordId > 0)
+            {
+                records.Add(new AddedId(kind, "", recordId, op.Value, filler.IsFiller(op.Key, op.Value)));
+            }
         }
 
         var result = new List<AddedId>(events);
+        result.AddRange(records);
         foreach ((int id, (JToken? file, JToken? info)) in maps)
         {
             // Both halves are the content, cloned so no op gains a parent; two mods that add one map with one tree entry are one map (GR-R3).
@@ -44,12 +52,18 @@ internal static class AddedIdIndex
         return result;
     }
 
-    /// <summary>True when the change set still adds <paramref name="remap"/>'s old id; otherwise the entry is inactive (GR-R12).</summary>
+    /// <summary>
+    /// True when the change set still adds <paramref name="remap"/>'s old id, and not as filler; otherwise the entry
+    /// is inactive (GR-R12, GR-R7).
+    /// </summary>
     public static bool IsActive(IdRemap remap, IReadOnlyList<AddedId> added)
     {
-        return added.Any(item => item.Kind == remap.Kind && item.Scope == remap.Scope && item.Id == remap.FromId);
+        return added.Any(item => item.Kind == remap.Kind && item.Scope == remap.Scope && item.Id == remap.FromId && !item.IsFiller);
     }
 }
 
-/// <summary>One added id and the content that decides whether two mods add the same thing.</summary>
-internal sealed record AddedId(IdKind Kind, string Scope, int Id, JToken Content);
+/// <summary>
+/// One added id and the content that decides whether two mods add the same thing. Filler (GR-R7) holds its id but
+/// never claims it.
+/// </summary>
+internal sealed record AddedId(IdKind Kind, string Scope, int Id, JToken Content, bool IsFiller = false);
