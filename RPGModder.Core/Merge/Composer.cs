@@ -545,8 +545,9 @@ public static class Composer
         return kind switch
         {
             CollisionKind.ValueClash or CollisionKind.DeleteVersusEdit or CollisionKind.IdClash or CollisionKind.SequenceClash
-                or CollisionKind.LogicClash or CollisionKind.PageClash or CollisionKind.FileClash => true,
-            CollisionKind.PluginOrderClash or CollisionKind.OrderAmbiguous or CollisionKind.BaseMismatch
+                or CollisionKind.LogicClash or CollisionKind.PageClash or CollisionKind.FileClash
+                or CollisionKind.BaseMismatch => true,
+            CollisionKind.PluginOrderClash or CollisionKind.OrderAmbiguous
                 or CollisionKind.SwitchBandConflict or CollisionKind.StateIdOverlap => false,
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "A collision kind guide 3.5 does not list.")
         };
@@ -572,13 +573,16 @@ public static class Composer
         };
     }
 
-    /// <summary>The "Default" column of guide 3.5 for slice 2a. Only the order kinds and the accept-only kinds have one.</summary>
+    /// <summary>
+    /// The "Default" column of guide 3.5 for slice 2a. Only the order kinds and <c>StateIdOverlap</c> have one; a
+    /// <c>BaseMismatch</c> waits for the player to accept that mod (owner decision, 2026-11-12).
+    /// </summary>
     private static ResolutionKind? DefaultFor(CollisionKind kind)
     {
         return kind switch
         {
             CollisionKind.PluginOrderClash or CollisionKind.OrderAmbiguous => ResolutionKind.KeepBothInProfileOrder,
-            CollisionKind.BaseMismatch or CollisionKind.StateIdOverlap => ResolutionKind.Accept,
+            CollisionKind.StateIdOverlap => ResolutionKind.Accept,
             _ => null
         };
     }
