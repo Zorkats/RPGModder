@@ -1,0 +1,17 @@
+{
+    "schema_version": 2,
+    "metadata": {
+        "id": "b-birch",
+        "name": "Birch Mod",
+        "author": "Zorkats",
+        "version": "1.0"
+    },
+    "file_ops": [
+        {
+            "source": "data/Map001.json",
+            "target": "data/Map001.json"
+        }
+    ],
+    "json_patches": [],
+    "plugins_registry": []
+}

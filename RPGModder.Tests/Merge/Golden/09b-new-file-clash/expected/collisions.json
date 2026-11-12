@@ -1,0 +1,17 @@
+[
+    {
+        "id": "7355101970aee977",
+        "kind": "FileClash",
+        "file": "js/plugins/sharedhelper.js",
+        "record": "*",
+        "path": "",
+        "mods": [
+            "a-ash",
+            "b-birch"
+        ],
+        "blocking": true,
+        "allowed": [
+            "PickMod"
+        ]
+    }
+]

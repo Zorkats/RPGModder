@@ -1,0 +1,21 @@
+{
+    "schema_version": 2,
+    "metadata": {
+        "id": "a-ash",
+        "name": "Ash Mod",
+        "author": "Zorkats",
+        "version": "1.0"
+    },
+    "file_ops": [],
+    "json_patches": [],
+    "plugins_registry": [
+        {
+            "name": "AshExtra",
+            "status": true,
+            "description": "Added by ash.",
+            "parameters": {
+                "mode": "fast"
+            }
+        }
+    ]
+}

@@ -1,0 +1,17 @@
+{
+    "schema_version": 2,
+    "metadata": {
+        "id": "a-ash",
+        "name": "Ash Mod",
+        "author": "Zorkats",
+        "version": "1.0"
+    },
+    "file_ops": [
+        {
+            "source": "data/Items.json",
+            "target": "data/Items.json"
+        }
+    ],
+    "json_patches": [],
+    "plugins_registry": []
+}

@@ -1,0 +1,18 @@
+[
+    {
+        "id": "6405909de5ee88d1",
+        "kind": "ValueClash",
+        "file": "data/items.json",
+        "record": "id:2",
+        "path": "price",
+        "mods": [
+            "a-tin",
+            "b-oak"
+        ],
+        "blocking": true,
+        "allowed": [
+            "PickMod",
+            "PickVanilla"
+        ]
+    }
+]

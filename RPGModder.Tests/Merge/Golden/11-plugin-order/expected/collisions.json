@@ -1,0 +1,18 @@
+[
+    {
+        "id": "43788bd637f69b68",
+        "kind": "OrderAmbiguous",
+        "file": "js/plugins.js",
+        "record": "plugin:Omega",
+        "path": "@after",
+        "mods": [
+            "a-ash",
+            "b-birch"
+        ],
+        "blocking": false,
+        "allowed": [
+            "PickMod",
+            "KeepBothInProfileOrder"
+        ]
+    }
+]

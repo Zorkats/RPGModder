@@ -1,0 +1,17 @@
+{
+    "schema_version": 2,
+    "metadata": {
+        "id": "a-ash",
+        "name": "Ash Mod",
+        "author": "Zorkats",
+        "version": "1.0"
+    },
+    "file_ops": [
+        {
+            "source": "js/plugins/SharedHelper.js",
+            "target": "js/plugins/SharedHelper.js"
+        }
+    ],
+    "json_patches": [],
+    "plugins_registry": []
+}
