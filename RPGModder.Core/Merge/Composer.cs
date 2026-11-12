@@ -13,10 +13,16 @@ namespace RPGModder.Core.Merge;
 /// </summary>
 public static class Composer
 {
+    /// <param name="remapPlan">
+    /// The plan, when lane A ran <see cref="IdRemapPlanner"/>: an <c>IdClash</c> one of its offers settles lists
+    /// <see cref="ResolutionKind.Remap"/> and carries <c>rules.remap_unchecked</c> (GR-R11), and its diagnostics join
+    /// the plan's.
+    /// </param>
     public static MergePlan Compose(
         IReadOnlyList<ModChangeSet> changeSets,
         IReadOnlyList<Resolution> resolutions,
-        BaseFileSet baseFiles)
+        BaseFileSet baseFiles,
+        RemapPlan? remapPlan = null)
     {
         ArgumentNullException.ThrowIfNull(changeSets);
         ArgumentNullException.ThrowIfNull(resolutions);
@@ -37,6 +43,8 @@ public static class Composer
             diagnostics.AddRange(set.Diagnostics);
         }
 
+        diagnostics.AddRange(remapPlan?.Diagnostics ?? []);
+
         // The writer stamps versionId into System.json (C-7), so a broken one must stop the plan here, not there.
         BaseFile? system = baseFiles.Find(RpgDataSchema.SystemFileKey);
         if (system is not null && !ChangeSetBuilder.TryReadBase(system, out _, out OperationDiagnostic? systemProblem))
@@ -50,9 +58,10 @@ public static class Composer
         ILookup<string, Resolution> choices = resolutions.ToLookup(item => item.CollisionId, StringComparer.Ordinal);
         var ops = new List<MergedOp>();
         var collisions = new List<(Collision Collision, CollisionOutcome Outcome)>();
+        IReadOnlyList<IdRemap> offers = remapPlan?.Offers ?? [];
         foreach (List<OpGroup> cluster in Cluster(Group(ordered)))
         {
-            ComposeCluster(cluster, choices, priorities, ops, collisions, diagnostics);
+            ComposeCluster(cluster, choices, priorities, offers, ops, collisions, diagnostics);
         }
 
         ComposePluginOrder(ops, choices, priorities, collisions, diagnostics);
@@ -162,6 +171,7 @@ public static class Composer
         List<OpGroup> cluster,
         ILookup<string, Resolution> choices,
         Dictionary<string, int> priorities,
+        IReadOnlyList<IdRemap> offers,
         List<MergedOp> ops,
         List<(Collision, CollisionOutcome)> collisions,
         List<OperationDiagnostic> diagnostics)
@@ -184,7 +194,7 @@ public static class Composer
             return;
         }
 
-        Collision collision = MakeCollision(cluster, mods);
+        Collision collision = OfferRemaps(MakeCollision(cluster, mods), offers, diagnostics);
         CollisionOutcome outcome = Decide(collision, choices, diagnostics);
         collisions.Add((collision, outcome));
 
@@ -200,7 +210,7 @@ public static class Composer
                 // inner ops are composed again, so a clash among them becomes a collision of its own (seam 11).
                 foreach (List<OpGroup> inner in Cluster(cluster.Skip(1).ToList()))
                 {
-                    ComposeCluster(inner, choices, priorities, ops, collisions, diagnostics);
+                    ComposeCluster(inner, choices, priorities, offers, ops, collisions, diagnostics);
                 }
 
                 break;
@@ -364,6 +374,34 @@ public static class Composer
         return MergeJson.Sha256Hex(MergeJson.Write(items));
     }
 
+    /// <summary>
+    /// GR-R11: an <c>IdClash</c> an offer settles lists <c>Remap</c>, stays blocking and has no default, and each
+    /// offer carries the warning once, though a map offer settles two collisions (its file and its tree record).
+    /// Lane A carries a chosen <c>Remap</c> out by recording the offer (seam 4.3).
+    /// </summary>
+    private static Collision OfferRemaps(Collision collision, IReadOnlyList<IdRemap> offers, List<OperationDiagnostic> diagnostics)
+    {
+        List<IdRemap> settling = offers.Where(offer => RemapPlaces.Settles(offer, collision)).ToList();
+        if (settling.Count == 0)
+        {
+            return collision;
+        }
+
+        foreach (IdRemap offer in settling)
+        {
+            diagnostics.Add(new OperationDiagnostic(
+                DiagnosticCodes.RulesRemapUnchecked,
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"Mod {offer.ModId}: {offer.Kind} {offer.FromId}{(offer.Kind == IdKind.MapEvent ? " in " + offer.Scope : "")} can move to {offer.ToId} to settle its id clash, but a plugin file the mod ships contains that number."),
+                DiagnosticSeverity.Warning,
+                offer.ModId));
+        }
+
+        // Declaration order, so Remap sits between the choices the collision already allows.
+        return collision with { Allowed = collision.Allowed.Append(ResolutionKind.Remap).Distinct().Order().ToList() };
+    }
+
     private static bool IsHeadMod(OpGroup head, string modId)
     {
         return head.Variants.Any(variant => variant.ModIds.Contains(modId, StringComparer.Ordinal));
@@ -408,8 +446,16 @@ public static class Composer
             kind = CollisionKind.ValueClash;
         }
 
+        // A mod with two variants of one place clashes with itself: a recorded remap moved an id onto one the mod now
+        // adds as well. Picking that mod would keep both ops, so it is not a choice (seam 11.2).
+        IReadOnlyList<ResolutionKind> allowed = AllowedFor(kind);
+        if (cluster.Any(group => group.Variants.SelectMany(variant => variant.ModIds).GroupBy(modId => modId, StringComparer.Ordinal).Any(ids => ids.Count() > 1)))
+        {
+            allowed = allowed.Where(item => item != ResolutionKind.PickMod).ToList();
+        }
+
         string id = CollisionId(kind, head.Key, head.Path, mods);
-        return new Collision(id, kind, head.Key, head.Path, mods, IsBlocking(kind), AllowedFor(kind), Fingerprint(cluster));
+        return new Collision(id, kind, head.Key, head.Path, mods, IsBlocking(kind), allowed, Fingerprint(cluster));
     }
 
     /// <summary>
@@ -507,8 +553,8 @@ public static class Composer
     }
 
     /// <summary>
-    /// The "Allowed resolutions" column of guide 3.5 for slice 2a, in declaration order. <c>Remap</c> and
-    /// <c>Gate</c> come with 2r and 2c; a <c>SwitchBandConflict</c> is settled by moving the band, never by a choice.
+    /// The "Allowed resolutions" column of guide 3.5 for slice 2a, in declaration order. <c>Remap</c> is added by
+    /// <see cref="OfferRemaps"/> (2r) and <c>Gate</c> comes with 2c; a <c>SwitchBandConflict</c> is settled by moving the band, never by a choice.
     /// </summary>
     private static IReadOnlyList<ResolutionKind> AllowedFor(CollisionKind kind)
     {

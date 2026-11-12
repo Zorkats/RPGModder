@@ -68,10 +68,12 @@ public static class MergedFileWriter
         BaseFile? baseFile = baseFiles.Find(file);
         if (baseFile is null)
         {
-            // GR-M9: a new file is one AddRecord on *, copied as the mod shipped it unless a patch changed it.
+            // GR-M9: a new file is one AddRecord on *, copied as the mod shipped it unless a patch or a remap changed
+            // it. Written as text, it names its mod so lane A takes the casing of that mod's file (seam 4.2 step 2);
+            // a map gets the casing the game loads instead (step 0), because a remapped one has no mod file name.
             ChangeOp added = SingleOp(fileOps, ChangeKind.AddRecord);
             return added.SourceFile is null
-                ? new MergedFile(file, MergedFileSource.Text, MergeJson.Write(Value(added)), null, null, modIds)
+                ? new MergedFile(file, MergedFileSource.Text, MergeJson.Write(Value(added)), added.ModId, null, modIds, RpgDataSchema.DiskPathOf(file))
                 : new MergedFile(file, MergedFileSource.ModFile, null, added.ModId, added.SourceFile, modIds);
         }
 

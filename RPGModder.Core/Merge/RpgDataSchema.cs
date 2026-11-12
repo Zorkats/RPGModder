@@ -1,4 +1,5 @@
 using Newtonsoft.Json.Linq;
+using System.Globalization;
 
 namespace RPGModder.Core.Merge;
 
@@ -22,6 +23,15 @@ public static class RpgDataSchema
 
     /// <summary>The map property that holds the events (guide 3.3).</summary>
     internal const string EventsProperty = "events";
+
+    /// <summary>The map tree, whose record index is the map id (guide 3.11).</summary>
+    internal const string MapInfosKey = "data/mapinfos.json";
+
+    /// <summary>The highest map id: the game loads map n from <c>MapNNN.json</c>, three digits (GR-R6).</summary>
+    private const int MapIdLimit = 999;
+
+    /// <summary>The highest event id per map in the MV and MZ editors (GR-R6; confirmed before step 2 ships).</summary>
+    private const int MapEventIdLimit = 999;
 
     /// <summary>The config save forms 2a decodes (GR-M10); <c>config.save</c> gives <c>merge.config_save_unsupported</c>.</summary>
     private const string MvConfigSave = "config.rpgsave";
@@ -275,6 +285,42 @@ public static class RpgDataSchema
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// The map id of <c>data/mapNNN.json</c> in the one form the game loads: at least three digits, no extra
+    /// leading zero, an id from 1 up.
+    /// </summary>
+    internal static bool TryGetMapId(string fileKey, out int id)
+    {
+        id = 0;
+        return IsMapFile(fileKey) &&
+               int.TryParse(fileKey.AsSpan(MapPrefix.Length, fileKey.Length - MapPrefix.Length - JsonSuffix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out id) &&
+               id > 0 &&
+               MapKey(id) == fileKey;
+    }
+
+    /// <summary>The key of map <paramref name="id"/>, the name <c>DataManager.loadMapData</c> builds, lower-cased.</summary>
+    internal static string MapKey(int id)
+    {
+        return MapPrefix + id.ToString("D3", CultureInfo.InvariantCulture) + JsonSuffix;
+    }
+
+    /// <summary>The casing the game asks for, for a map file lane B renders as text (seam 3.3, <c>DiskPath</c>).</summary>
+    internal static string? DiskPathOf(string fileKey)
+    {
+        return TryGetMapId(fileKey, out int id) ? "data/Map" + id.ToString("D3", CultureInfo.InvariantCulture) + JsonSuffix : null;
+    }
+
+    /// <summary>The highest id a remap may give, or <c>null</c> for a kind step 1 does not remap (GR-R6).</summary>
+    internal static int? RemapLimit(IdKind kind)
+    {
+        return kind switch
+        {
+            IdKind.Map => MapIdLimit,
+            IdKind.MapEvent => MapEventIdLimit,
+            _ => null
+        };
     }
 
     /// <summary>

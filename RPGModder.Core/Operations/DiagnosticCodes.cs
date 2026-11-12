@@ -47,6 +47,7 @@ public static class DiagnosticCodes
     public const string RulesScopeReduced = "rules.scope_reduced";
     public const string RulesRemapApplied = "rules.remap_applied";
     public const string RulesRemapUnchecked = "rules.remap_unchecked";
+    public const string RulesRemapTargetTaken = "rules.remap_target_taken";
     public const string RulesSwitchBandMoved = "rules.switch_band_moved";
     public const string RulesSwitchBandExhausted = "rules.switch_band_exhausted";
 
