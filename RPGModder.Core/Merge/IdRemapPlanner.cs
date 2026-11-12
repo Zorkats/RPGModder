@@ -1,6 +1,7 @@
 using Newtonsoft.Json.Linq;
 using RPGModder.Core.Models;
 using RPGModder.Core.Operations;
+using RPGModder.Core.Services;
 using System.Globalization;
 
 namespace RPGModder.Core.Merge;
@@ -20,11 +21,16 @@ public static class IdRemapPlanner
     /// mod adds a map, <c>data/MapInfos.json</c> and every vanilla map file, listed in the tree or not. A clash whose
     /// base file is missing cannot move, and a map id whose file vanilla has is never a target and never moves.
     /// </param>
+    /// <param name="engine">
+    /// The game's engine, which sets the highest map id a move may give (GR-R6): 2000 for MZ, 999 for MV and for an
+    /// unknown engine (<c>null</c>).
+    /// </param>
     public static RemapPlan Plan(
         IReadOnlyList<RemapMod> installed,
         IReadOnlyList<IdRemap> recorded,
         IReadOnlyCollection<string> deployedMods,
-        BaseFileSet baseFiles)
+        BaseFileSet baseFiles,
+        RpgMakerEngine? engine)
     {
         ArgumentNullException.ThrowIfNull(installed);
         ArgumentNullException.ThrowIfNull(recorded);
@@ -56,7 +62,7 @@ public static class IdRemapPlanner
             }
         }
 
-        var targets = new Targets(added.Values.SelectMany(list => list).ToList(), recorded, baseFiles);
+        var targets = new Targets(added.Values.SelectMany(list => list).ToList(), recorded, baseFiles, engine);
         var references = new Dictionary<string, ModReferences>(StringComparer.Ordinal);
         var moves = new List<IdRemap>();
         var offers = new List<IdRemap>();
@@ -300,13 +306,15 @@ public static class IdRemapPlanner
         private readonly List<AddedId> _added;
         private readonly IReadOnlyList<IdRemap> _recorded;
         private readonly BaseFileSet _baseFiles;
+        private readonly RpgMakerEngine? _engine;
         private readonly Dictionary<(IdKind Kind, string Scope), int?> _next = new();
 
-        public Targets(List<AddedId> added, IReadOnlyList<IdRemap> recorded, BaseFileSet baseFiles)
+        public Targets(List<AddedId> added, IReadOnlyList<IdRemap> recorded, BaseFileSet baseFiles, RpgMakerEngine? engine)
         {
             _added = added;
             _recorded = recorded;
             _baseFiles = baseFiles;
+            _engine = engine;
         }
 
         public int? Take(IdKind kind, string scope)
@@ -322,7 +330,7 @@ public static class IdRemapPlanner
                 next++;
             }
 
-            int? limit = RpgDataSchema.RemapLimit(kind);
+            int? limit = RpgDataSchema.RemapLimit(kind, _engine);
             if (next is null || limit is null || next > limit)
             {
                 _next[(kind, scope)] = next;

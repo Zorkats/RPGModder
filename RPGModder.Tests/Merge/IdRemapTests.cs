@@ -2,6 +2,7 @@ using Newtonsoft.Json.Linq;
 using RPGModder.Core.Merge;
 using RPGModder.Core.Models;
 using RPGModder.Core.Operations;
+using RPGModder.Core.Services;
 using static RPGModder.Tests.Merge.MergeTestKit;
 
 namespace RPGModder.Tests.Merge;
@@ -84,7 +85,12 @@ public sealed class IdRemapTests
 
     private static RemapPlan Plan(BaseFileSet bases, params RemapMod[] mods)
     {
-        return IdRemapPlanner.Plan(mods, [], [], bases);
+        return Plan(null, bases, mods);
+    }
+
+    private static RemapPlan Plan(RpgMakerEngine? engine, BaseFileSet bases, params RemapMod[] mods)
+    {
+        return IdRemapPlanner.Plan(mods, [], [], bases, engine);
     }
 
     /// <summary>The order lane A runs: plan, apply per enabled mod, then compose with the offers.</summary>
@@ -258,7 +264,7 @@ public sealed class IdRemapTests
         RemapMod second = Installed(FileMod("b-oak", Map, MapWith(NewEvent(3, "Merchant")), 1), MapBases);
         RemapPlan firstRun = Plan(MapBases, first, second);
 
-        RemapPlan secondRun = IdRemapPlanner.Plan([first, second], firstRun.NewEntries, ["a-tin", "b-oak"], MapBases);
+        RemapPlan secondRun = IdRemapPlanner.Plan([first, second], firstRun.NewEntries, ["a-tin", "b-oak"], MapBases, null);
 
         Assert.Empty(secondRun.NewEntries);
         Assert.Equal(firstRun.Remaps, secondRun.Remaps);
@@ -271,7 +277,7 @@ public sealed class IdRemapTests
         RemapMod first = Installed(FileMod("a-tin", Map, MapWith(NewEvent(3, "Guard")), 0), MapBases);
         RemapMod second = Installed(FileMod("b-oak", Map, MapWith(NewEvent(3, "Merchant")), 1), MapBases);
 
-        RemapPlan plan = IdRemapPlanner.Plan([first, second], [], ["b-oak"], MapBases);
+        RemapPlan plan = IdRemapPlanner.Plan([first, second], [], ["b-oak"], MapBases, null);
 
         Assert.Equal(["a-tin|MapEvent|data/map001.json|3>4"], plan.NewEntries.Select(Entry));
     }
@@ -392,7 +398,7 @@ public sealed class IdRemapTests
 
         // The player chooses Remap: lane A records the offer, and the next plan applies it.
         IdRemap chosen = plan.OfferFor(clash, "b-oak")!;
-        RemapPlan next = IdRemapPlanner.Plan([first, second], [chosen], [], bases);
+        RemapPlan next = IdRemapPlanner.Plan([first, second], [chosen], [], bases, null);
         Assert.Empty(next.NewEntries);
         Assert.Equal([chosen], next.Remaps);
         Assert.True(ComposeRemapped(next, bases, first, second).IsDeployable);
@@ -404,7 +410,7 @@ public sealed class IdRemapTests
         RemapMod mod = Installed(FileMod("b-oak", Map, MapWith(NewEvent(3, "Merchant")), 0), MapBases);
         var stale = new IdRemap("b-oak", IdKind.MapEvent, MapKey, 5, 9);
 
-        RemapPlan plan = IdRemapPlanner.Plan([mod], [stale], [], MapBases);
+        RemapPlan plan = IdRemapPlanner.Plan([mod], [stale], [], MapBases, null);
 
         Assert.Empty(plan.Remaps);
         Assert.Empty(plan.NewEntries);
@@ -429,7 +435,7 @@ public sealed class IdRemapTests
             enabled: false);
         var stale = new IdRemap("c-elm", IdKind.MapEvent, MapKey, 4, 9);
 
-        RemapPlan plan = IdRemapPlanner.Plan([first, second, disabled], [stale], [], MapBases);
+        RemapPlan plan = IdRemapPlanner.Plan([first, second, disabled], [stale], [], MapBases, null);
 
         Assert.Equal(["b-oak|MapEvent|data/map001.json|3>10"], plan.NewEntries.Select(Entry));
     }
@@ -448,8 +454,11 @@ public sealed class IdRemapTests
         Assert.Equal(["a-tin", "b-oak"], Assert.Single(merged.Ops).ModIds);
     }
 
-    [Fact]
-    public void Plan_TargetPastTheEditorLimit_RefusesTheMove()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(RpgMakerEngine.MV)]
+    [InlineData(RpgMakerEngine.MZ)]
+    public void Plan_TargetPastTheEditorLimit_RefusesTheMove(RpgMakerEngine? engine)
     {
         string wide = EditMap(map =>
         {
@@ -464,7 +473,7 @@ public sealed class IdRemapTests
         RemapMod first = Installed(FileMod("a-tin", Map, Adding("Guard"), 0), bases);
         RemapMod second = Installed(FileMod("b-oak", Map, Adding("Merchant"), 1), bases);
 
-        RemapPlan plan = Plan(bases, first, second);
+        RemapPlan plan = Plan(engine, bases, first, second);
 
         Assert.Empty(plan.Remaps);
         Assert.False(ComposeRemapped(plan, bases, first, second).IsDeployable);
@@ -560,8 +569,8 @@ public sealed class IdRemapTests
         ];
         IdRemap[] recorded = [new IdRemap("z-old", IdKind.MapEvent, MapKey, 3, 7), new IdRemap("y-old", IdKind.MapEvent, MapKey, 3, 8)];
 
-        RemapPlan forward = IdRemapPlanner.Plan(mods, recorded, ["c-elm"], MapBases);
-        RemapPlan backward = IdRemapPlanner.Plan(mods.Reverse().ToList(), recorded.Reverse().ToList(), ["c-elm"], MapBases);
+        RemapPlan forward = IdRemapPlanner.Plan(mods, recorded, ["c-elm"], MapBases, null);
+        RemapPlan backward = IdRemapPlanner.Plan(mods.Reverse().ToList(), recorded.Reverse().ToList(), ["c-elm"], MapBases, null);
 
         Assert.Equal(["a-tin|MapEvent|data/map001.json|3>9", "b-oak|MapEvent|data/map001.json|3>10"], forward.NewEntries.Select(Entry));
         Assert.Equal(forward.Remaps, backward.Remaps);
@@ -605,7 +614,7 @@ public sealed class IdRemapTests
             MapBases);
         var recorded = new IdRemap("b-oak", IdKind.MapEvent, MapKey, 3, 4);
 
-        RemapPlan plan = IdRemapPlanner.Plan([first, updated], [recorded], ["a-tin", "b-oak"], MapBases);
+        RemapPlan plan = IdRemapPlanner.Plan([first, updated], [recorded], ["a-tin", "b-oak"], MapBases, null);
         MergePlan merged = ComposeRemapped(plan, MapBases, first, updated);
         MergePlan picked = Composer.Compose(
             [first.ChangeSet, IdRemapper.Apply(updated.ChangeSet, plan.Remaps)],
@@ -633,7 +642,7 @@ public sealed class IdRemapTests
             MapBases);
         var recorded = new IdRemap("b-oak", IdKind.MapEvent, MapKey, 3, 4);
 
-        RemapPlan plan = IdRemapPlanner.Plan([first, updated], [recorded], ["a-tin", "b-oak"], MapBases);
+        RemapPlan plan = IdRemapPlanner.Plan([first, updated], [recorded], ["a-tin", "b-oak"], MapBases, null);
         MergePlan merged = ComposeRemapped(plan, MapBases, first, updated);
 
         Assert.Equal(["b-oak|MapEvent|data/map001.json|3>4", "b-oak|MapEvent|data/map001.json|4>5"], plan.Remaps.Select(Entry));
@@ -657,7 +666,7 @@ public sealed class IdRemapTests
             new IdRemap("b-oak", IdKind.MapEvent, MapKey, 3, 7)
         ];
 
-        RemapPlan plan = IdRemapPlanner.Plan([mod], recorded, ["b-oak"], MapBases);
+        RemapPlan plan = IdRemapPlanner.Plan([mod], recorded, ["b-oak"], MapBases, null);
 
         Assert.Equal(["b-oak|MapEvent|data/map001.json|3>7", "b-oak|MapEvent|data/map001.json|6>8"], plan.Remaps.Select(Entry));
     }
@@ -707,24 +716,61 @@ public sealed class IdRemapTests
         Assert.False(merged.IsDeployable);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData(RpgMakerEngine.MV)]
+    public void Plan_MapPastTheEditorLimit_RefusesTheMove(RpgMakerEngine? engine)
+    {
+        (BaseFileSet bases, RemapMod a, RemapMod b) = MapClashAt(999);
+
+        RemapPlan plan = Plan(engine, bases, a, b);
+
+        Assert.Empty(plan.Remaps);
+        Assert.False(ComposeRemapped(plan, bases, a, b).IsDeployable);
+    }
+
     [Fact]
-    public void Plan_MapPastTheEditorLimit_RefusesTheMove()
+    public void Plan_MzMapPast999_MovesTo1000()
+    {
+        (BaseFileSet bases, RemapMod a, RemapMod b) = MapClashAt(999);
+
+        RemapPlan plan = Plan(RpgMakerEngine.MZ, bases, a, b);
+        MergePlan merged = ComposeRemapped(plan, bases, a, b);
+        IReadOnlyList<MergedFile> files = MergedFileWriter.Write(merged, bases, null);
+
+        Assert.Equal(["b-oak|Map||999>1000"], plan.NewEntries.Select(Entry));
+        Assert.True(merged.IsDeployable);
+        MergedFile moved = Assert.Single(files, file => file.File == "data/map1000.json");
+        Assert.Equal("data/Map1000.json", moved.DiskPath);
+        Assert.Equal("Tower", JObject.Parse(moved.Text!)["displayName"]!.Value<string>());
+    }
+
+    [Fact]
+    public void Plan_MzMapPastTheEditorLimit_RefusesTheMove()
+    {
+        (BaseFileSet bases, RemapMod a, RemapMod b) = MapClashAt(2000);
+
+        RemapPlan plan = Plan(RpgMakerEngine.MZ, bases, a, b);
+
+        Assert.Empty(plan.Remaps);
+        Assert.False(ComposeRemapped(plan, bases, a, b).IsDeployable);
+    }
+
+    /// <summary>Two mods add map <paramref name="id"/> to a tree whose highest id is the one below it.</summary>
+    private static (BaseFileSet Bases, RemapMod A, RemapMod B) MapClashAt(int id)
     {
         string tree = EditArray(VanillaMapInfos, infos =>
         {
-            while (infos.Count < 999)
+            while (infos.Count < id)
             {
                 infos.Add(JValue.CreateNull());
             }
         });
         BaseFileSet bases = Bases(Base(MapInfos, tree));
-        RemapMod a = Installed(Mod("a-tin", 0, ("data/Map999.json", EditMap(map => map["displayName"] = "Cave"))), bases);
-        RemapMod b = Installed(Mod("b-oak", 1, ("data/Map999.json", EditMap(map => map["displayName"] = "Tower"))), bases);
-
-        RemapPlan plan = Plan(bases, a, b);
-
-        Assert.Empty(plan.Remaps);
-        Assert.False(ComposeRemapped(plan, bases, a, b).IsDeployable);
+        string file = "data/Map" + id.ToString("D3", System.Globalization.CultureInfo.InvariantCulture) + ".json";
+        RemapMod a = Installed(Mod("a-tin", 0, (file, EditMap(map => map["displayName"] = "Cave"))), bases);
+        RemapMod b = Installed(Mod("b-oak", 1, (file, EditMap(map => map["displayName"] = "Tower"))), bases);
+        return (bases, a, b);
     }
 
     [Fact]
@@ -784,7 +830,7 @@ public sealed class IdRemapTests
         RemapMod deployed = Installed(FileMod("a-tin", Map, MapWith(NewEvent(3, "Guard")), 0), MapBases);
         RemapMod newcomer = Installed(FileMod("b-oak", Map, MapWith(NewEvent(3, "Merchant")), 1), MapBases, scripts: "var step = 3;");
 
-        RemapPlan plan = IdRemapPlanner.Plan([deployed, newcomer], [], ["a-tin"], MapBases);
+        RemapPlan plan = IdRemapPlanner.Plan([deployed, newcomer], [], ["a-tin"], MapBases, null);
         MergePlan merged = ComposeRemapped(plan, MapBases, deployed, newcomer);
 
         Assert.Empty(plan.Remaps);
@@ -817,9 +863,9 @@ public sealed class IdRemapTests
         RemapMod second = Installed(FileMod("b-oak", Map, UpdatedMapAdding("Merchant"), 1), bases);
         var recorded = new IdRemap("b-oak", IdKind.MapEvent, MapKey, 3, 4);
 
-        RemapPlan plan = IdRemapPlanner.Plan([first, second], [recorded], ["a-tin", "b-oak"], bases);
+        RemapPlan plan = IdRemapPlanner.Plan([first, second], [recorded], ["a-tin", "b-oak"], bases, null);
         MergePlan merged = ComposeRemapped(plan, bases, first, second);
-        RemapPlan next = IdRemapPlanner.Plan([first, second], [recorded, .. plan.NewEntries], ["a-tin", "b-oak"], bases);
+        RemapPlan next = IdRemapPlanner.Plan([first, second], [recorded, .. plan.NewEntries], ["a-tin", "b-oak"], bases, null);
 
         Assert.Equal(["b-oak|MapEvent|data/map001.json|3>5"], plan.NewEntries.Select(Entry));
         Assert.Equal(plan.NewEntries, plan.Remaps);
@@ -839,7 +885,7 @@ public sealed class IdRemapTests
         BaseFileSet bases = Bases(Base(Map, UpdatedMap));
         RemapMod mod = Installed(FileMod("b-oak", Map, UpdatedMapAdding("Merchant"), 0), bases);
 
-        RemapPlan plan = IdRemapPlanner.Plan([mod], [new IdRemap("b-oak", IdKind.MapEvent, MapKey, 3, 4)], ["b-oak"], bases);
+        RemapPlan plan = IdRemapPlanner.Plan([mod], [new IdRemap("b-oak", IdKind.MapEvent, MapKey, 3, 4)], ["b-oak"], bases, null);
 
         Assert.Empty(plan.Remaps);
         Assert.Equal(DiagnosticCodes.RulesRemapTargetTaken, Assert.Single(plan.Diagnostics).Code);

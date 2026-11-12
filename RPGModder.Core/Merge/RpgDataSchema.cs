@@ -1,4 +1,5 @@
 using Newtonsoft.Json.Linq;
+using RPGModder.Core.Services;
 using System.Globalization;
 
 namespace RPGModder.Core.Merge;
@@ -27,10 +28,19 @@ public static class RpgDataSchema
     /// <summary>The map tree, whose record index is the map id (guide 3.11).</summary>
     internal const string MapInfosKey = "data/mapinfos.json";
 
-    /// <summary>The highest map id: the game loads map n from <c>MapNNN.json</c>, three digits (GR-R6).</summary>
-    private const int MapIdLimit = 999;
+    /// <summary>
+    /// The highest map id the MV editor gives (GR-R6). Also used when the engine is unknown, because it is the lower
+    /// of the two.
+    /// </summary>
+    private const int MvMapIdLimit = 999;
 
-    /// <summary>The highest event id per map in the MV and MZ editors (GR-R6; confirmed before step 2 ships).</summary>
+    /// <summary>The highest map id the MZ 1.10.0 editor gives (GR-R6; its map tree's <c>maxMapId</c>).</summary>
+    private const int MzMapIdLimit = 2000;
+
+    /// <summary>
+    /// The highest event id per map (GR-R6). The MZ 1.10.0 editor refuses event 1000 ("Cannot create any more
+    /// events."); MV's limit is taken to be the same.
+    /// </summary>
     private const int MapEventIdLimit = 999;
 
     /// <summary>The config save forms 2a decodes (GR-M10); <c>config.save</c> gives <c>merge.config_save_unsupported</c>.</summary>
@@ -312,12 +322,15 @@ public static class RpgDataSchema
         return TryGetMapId(fileKey, out int id) ? "data/Map" + id.ToString("D3", CultureInfo.InvariantCulture) + JsonSuffix : null;
     }
 
-    /// <summary>The highest id a remap may give, or <c>null</c> for a kind step 1 does not remap (GR-R6).</summary>
-    internal static int? RemapLimit(IdKind kind)
+    /// <summary>
+    /// The highest id a remap may give, or <c>null</c> for a kind step 1 does not remap (GR-R6). A <c>null</c>
+    /// engine gets MV's limits.
+    /// </summary>
+    internal static int? RemapLimit(IdKind kind, RpgMakerEngine? engine)
     {
         return kind switch
         {
-            IdKind.Map => MapIdLimit,
+            IdKind.Map => engine == RpgMakerEngine.MZ ? MzMapIdLimit : MvMapIdLimit,
             IdKind.MapEvent => MapEventIdLimit,
             _ => null
         };
