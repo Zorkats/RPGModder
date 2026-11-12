@@ -13,8 +13,8 @@ public static class IdRemapper
     /// <summary>
     /// Applies the entries of <paramref name="remaps"/> that name this mod and an id it still adds; the others are
     /// inactive and change nothing (GR-R12). All moves of one mod apply in one pass, so an id moved onto another
-    /// moved id is not moved twice. Each applied entry adds <c>rules.remap_applied</c> (GR-R13). Step 1 applies the
-    /// <see cref="IdKind.MapEvent"/> and <see cref="IdKind.Map"/> kinds and ignores the others.
+    /// moved id is not moved twice. Each applied entry adds <c>rules.remap_applied</c> (GR-R13). Map events, maps and
+    /// the twelve database kinds move; an entry of another kind changes nothing.
     /// </summary>
     public static ModChangeSet Apply(ModChangeSet changeSet, IReadOnlyList<IdRemap> remaps)
     {
@@ -28,7 +28,7 @@ public static class IdRemapper
 
         IReadOnlyList<AddedId> added = AddedIdIndex.Of(changeSet);
         List<IdRemap> active = remaps
-            .Where(remap => remap.ModId == changeSet.ModId && remap.Kind is IdKind.MapEvent or IdKind.Map && AddedIdIndex.IsActive(remap, added))
+            .Where(remap => remap.ModId == changeSet.ModId && RpgDataSchema.IsRemappable(remap.Kind) && AddedIdIndex.IsActive(remap, added))
             .Distinct()
             .OrderBy(remap => remap.Kind)
             .ThenBy(remap => remap.Scope, StringComparer.Ordinal)
@@ -38,7 +38,7 @@ public static class IdRemapper
         var table = new RemapTable();
         foreach (IdRemap remap in active)
         {
-            Dictionary<int, int> moves = remap.Kind == IdKind.Map ? table.Maps : EventMoves(table, remap.Scope);
+            Dictionary<int, int> moves = table.For(remap.Kind, remap.Scope);
             if (remap.ToId <= 0 || moves.ContainsValue(remap.ToId) || !moves.TryAdd(remap.FromId, remap.ToId))
             {
                 // The planner gives each old id one positive target of its own; anything else is a caller bug.
@@ -54,8 +54,7 @@ public static class IdRemapper
         }
 
         // A stable sort: two ops can share a place when a recorded move lands on an id the mod now adds too.
-        List<ChangeOp> ops = changeSet.Ops
-            .Select(op => ReferenceMap.Rewrite(op, table))
+        List<ChangeOp> ops = ReferenceMap.Rewrite(changeSet, table)
             .OrderBy(op => op, Comparer<ChangeOp>.Create(ChangeSetBuilder.CompareOps))
             .ToList();
 
@@ -76,16 +75,5 @@ public static class IdRemapper
         return string.Create(
             CultureInfo.InvariantCulture,
             $"Mod {remap.ModId}: {remap.Kind} {remap.FromId}{where} moved to {remap.ToId}.");
-    }
-
-    private static Dictionary<int, int> EventMoves(RemapTable table, string scope)
-    {
-        if (!table.Events.TryGetValue(scope, out Dictionary<int, int>? moves))
-        {
-            moves = new Dictionary<int, int>();
-            table.Events.Add(scope, moves);
-        }
-
-        return moves;
     }
 }

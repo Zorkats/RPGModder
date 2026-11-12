@@ -1,5 +1,6 @@
 using Newtonsoft.Json.Linq;
 using RPGModder.Core.Models;
+using RPGModder.Core.Services;
 
 namespace RPGModder.Core.Merge;
 
@@ -10,7 +11,11 @@ namespace RPGModder.Core.Merge;
 /// </summary>
 public static class MergedFileWriter
 {
-    public static IReadOnlyList<MergedFile> Write(MergePlan plan, BaseFileSet baseFiles, int? systemVersionId)
+    /// <param name="engine">
+    /// The game's engine, which picks the blank record that fills a hole in a database file (GR-R8). An unknown
+    /// engine (<c>null</c>) gets MV's blanks.
+    /// </param>
+    public static IReadOnlyList<MergedFile> Write(MergePlan plan, BaseFileSet baseFiles, int? systemVersionId, RpgMakerEngine? engine = null)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(baseFiles);
@@ -56,14 +61,20 @@ public static class MergedFileWriter
                 MergeFileKind.Opaque => Copy(file, fileOps, modIds),
                 MergeFileKind.PluginList => new MergedFile(file, MergedFileSource.Text, RenderPluginList(file, fileOps, baseFiles), null, null, modIds),
                 MergeFileKind.ConfigSave => new MergedFile(file, MergedFileSource.Text, RenderConfigSave(file, fileOps, baseFiles), null, null, modIds),
-                _ => WriteDataFile(file, fileOps, baseFiles, systemVersionId, modIds)
+                _ => WriteDataFile(file, fileOps, baseFiles, systemVersionId, engine, modIds)
             });
         }
 
         return result;
     }
 
-    private static MergedFile WriteDataFile(string file, List<MergedOp> fileOps, BaseFileSet baseFiles, int? systemVersionId, List<string> modIds)
+    private static MergedFile WriteDataFile(
+        string file,
+        List<MergedOp> fileOps,
+        BaseFileSet baseFiles,
+        int? systemVersionId,
+        RpgMakerEngine? engine,
+        List<string> modIds)
     {
         BaseFile? baseFile = baseFiles.Find(file);
         if (baseFile is null)
@@ -71,19 +82,55 @@ public static class MergedFileWriter
             // GR-M9: a new file is one AddRecord on *, copied as the mod shipped it unless a patch or a remap changed
             // it. Written as text, it names its mod so lane A takes the casing of that mod's file (seam 4.2 step 2);
             // a map gets the casing the game loads instead (step 0), because a remapped one has no mod file name.
+            // A database file with a hole is written as text too, so the hole gets its blank record (GR-R8).
             ChangeOp added = SingleOp(fileOps, ChangeKind.AddRecord);
-            return added.SourceFile is null
-                ? new MergedFile(file, MergedFileSource.Text, MergeJson.Write(Value(added)), added.ModId, null, modIds, RpgDataSchema.DiskPathOf(file))
-                : new MergedFile(file, MergedFileSource.ModFile, null, added.ModId, added.SourceFile, modIds);
+            JToken value = Value(added);
+            if (added.SourceFile is not null && !HasHoles(file, value))
+            {
+                return new MergedFile(file, MergedFileSource.ModFile, null, added.ModId, added.SourceFile, modIds);
+            }
+
+            JToken filled = value.DeepClone();
+            FillHoles(file, filled, engine);
+            return new MergedFile(file, MergedFileSource.Text, MergeJson.Write(filled), added.ModId, null, modIds, RpgDataSchema.DiskPathOf(file));
         }
 
         JToken root = Render(file, baseFile, fileOps);
+        FillHoles(file, root, engine);
         if (file == RpgDataSchema.SystemFileKey && systemVersionId is not null)
         {
             SetVersionId(root, systemVersionId.Value);
         }
 
         return new MergedFile(file, MergedFileSource.Text, MergeJson.Write(root), null, null, modIds);
+    }
+
+    /// <summary>
+    /// GR-R8: a database file gets no <c>null</c> above index 0. Each hole, left by a removed, disabled or moved
+    /// record, takes the file's blank record with its own id. <c>MapInfos</c> and a map's events keep their holes.
+    /// </summary>
+    private static void FillHoles(string file, JToken root, RpgMakerEngine? engine)
+    {
+        if (root is not JArray records)
+        {
+            return;
+        }
+
+        for (int index = 1; index < records.Count; index++)
+        {
+            if (records[index].Type == JTokenType.Null && RpgDataSchema.BlankRecord(file, engine) is { } blank)
+            {
+                blank["id"] = index;
+                records[index] = blank;
+            }
+        }
+    }
+
+    private static bool HasHoles(string file, JToken root)
+    {
+        return RpgDataSchema.DatabaseKindOf(file) is not null &&
+               root is JArray records &&
+               records.Skip(1).Any(record => record.Type == JTokenType.Null);
     }
 
     /// <summary>A replaced opaque file is the bytes of the mod whose id sorts first among those that ship them.</summary>

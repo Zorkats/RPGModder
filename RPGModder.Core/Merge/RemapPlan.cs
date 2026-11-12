@@ -8,7 +8,8 @@ namespace RPGModder.Core.Merge;
 /// deployed (GR-R12). <c>Offers</c> are moves the planner did not make because the old id appears in a plugin file
 /// the mod ships (GR-R11); lane A passes them to <see cref="Composer.Compose"/> and appends one when the player
 /// chooses <see cref="ResolutionKind.Remap"/>. <c>Diagnostics</c> holds <c>rules.remap_target_taken</c>, one per
-/// recorded entry whose target vanilla now uses; <see cref="Composer.Compose"/> carries them into the plan.
+/// recorded entry whose target vanilla now uses, and <c>rules.remap_stale_reference</c>, one per entry in force whose
+/// mod now names the old id where a move cannot follow it; <see cref="Composer.Compose"/> carries them into the plan.
 /// </summary>
 public sealed record RemapPlan(
     IReadOnlyList<IdRemap> Remaps,

@@ -97,7 +97,7 @@ public sealed class MergedFileWriterContractTests
     }
 
     [Fact]
-    public void Write_RemovedRecords_AreNullInsideAndCutAtTheEnd()
+    public void Write_RemovedRecords_AreBlankInsideAndCutAtTheEnd()
     {
         const string vanillaItems =
             "[\nnull,\n{\"id\":1,\"name\":\"Herb\",\"price\":50},\n{\"id\":2,\"name\":\"Tonic\",\"price\":100},\n{\"id\":3,\"name\":\"Salve\",\"price\":150}\n]";
@@ -121,7 +121,10 @@ public sealed class MergedFileWriterContractTests
 
         MergedFile file = Assert.Single(written);
         Assert.Equal("data/items.json", file.File);
-        Assert.Equal("[null,null,{\"id\":2,\"name\":\"Tonic\",\"price\":100}]", file.Text);
+        // GR-R8: a hole above index 0 takes the blank record; the trailing removal is cut.
+        Assert.Equal(
+            "[null," + "{\"id\":1,\"animationId\":0,\"consumable\":true,\"damage\":{\"critical\":false,\"elementId\":0,\"formula\":\"0\",\"type\":0,\"variance\":20},\"description\":\"\",\"effects\":[],\"hitType\":0,\"iconIndex\":0,\"itypeId\":1,\"name\":\"\",\"note\":\"\",\"occasion\":0,\"price\":0,\"repeats\":1,\"scope\":7,\"speed\":0,\"successRate\":100,\"tpGain\":0}" + ",{\"id\":2,\"name\":\"Tonic\",\"price\":100}]",
+            file.Text);
     }
 
     [Fact]

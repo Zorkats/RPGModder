@@ -43,18 +43,35 @@ public static class RpgDataSchema
     /// </summary>
     private const int MapEventIdLimit = 999;
 
+    /// <summary>
+    /// The highest database record id the MZ 1.10.0 editor gives (GR-R6): its Change Maximum box stops at 9999, on
+    /// every database tab.
+    /// </summary>
+    private const int MzRecordIdLimit = 9999;
+
+    /// <summary>
+    /// The highest database record id a move gives on MV and on an unknown engine (GR-R6). The MV editor was not
+    /// checked, so this is the lower limit of the editors before it: a move that stays a choice is the safe side.
+    /// </summary>
+    private const int MvRecordIdLimit = 999;
+
     /// <summary>The config save forms 2a decodes (GR-M10); <c>config.save</c> gives <c>merge.config_save_unsupported</c>.</summary>
     private const string MvConfigSave = "config.rpgsave";
 
     private const string MzConfigSave = "config.rmmzsave";
 
+    private const string DataFolder = "data/";
     private const string SystemFile = "system.json";
     private const string MapInfosFile = "mapinfos.json";
     private const string MapPrefix = "data/map";
     private const string JsonSuffix = ".json";
 
     /// <summary>The policy table name every <c>MapNNN.json</c> shares; no real file name has angle brackets.</summary>
-    private const string MapTable = "<map>";
+    internal const string MapTable = "<map>";
+
+    /// <summary>The property of a database record that GR-R7 reads.</summary>
+    private const string NameProperty = "name";
+    private const string IdProperty = "id";
 
     private const string PagesPath = "pages";
 
@@ -64,6 +81,25 @@ public static class RpgDataSchema
         MzConfigSave,
         "config.save"
     };
+
+    /// <summary>The database file of each record kind a remap moves (guide 3.11); the record index is the id.</summary>
+    private static readonly Dictionary<IdKind, string> DatabaseFiles = new()
+    {
+        [IdKind.Item] = "items.json",
+        [IdKind.Weapon] = "weapons.json",
+        [IdKind.Armor] = "armors.json",
+        [IdKind.Skill] = "skills.json",
+        [IdKind.State] = "states.json",
+        [IdKind.Enemy] = "enemies.json",
+        [IdKind.Troop] = "troops.json",
+        [IdKind.CommonEvent] = "commonevents.json",
+        [IdKind.Actor] = "actors.json",
+        [IdKind.Class] = "classes.json",
+        [IdKind.Animation] = "animations.json",
+        [IdKind.Tileset] = "tilesets.json"
+    };
+
+    private static readonly Dictionary<string, IdKind> DatabaseKinds = DatabaseFiles.ToDictionary(pair => pair.Value, pair => pair.Key, StringComparer.Ordinal);
 
     /// <summary>The database files of guide 3.3: an array whose index is the record id.</summary>
     private static readonly HashSet<string> RecordFiles = new(StringComparer.Ordinal)
@@ -323,17 +359,102 @@ public static class RpgDataSchema
     }
 
     /// <summary>
-    /// The highest id a remap may give, or <c>null</c> for a kind step 1 does not remap (GR-R6). A <c>null</c>
+    /// The highest id a remap may give, or <c>null</c> for a kind no step so far remaps (GR-R6). A <c>null</c>
     /// engine gets MV's limits.
     /// </summary>
     internal static int? RemapLimit(IdKind kind, RpgMakerEngine? engine)
     {
+        bool mz = engine == RpgMakerEngine.MZ;
         return kind switch
         {
-            IdKind.Map => engine == RpgMakerEngine.MZ ? MzMapIdLimit : MvMapIdLimit,
+            IdKind.Map => mz ? MzMapIdLimit : MvMapIdLimit,
             IdKind.MapEvent => MapEventIdLimit,
+            _ when DatabaseFiles.ContainsKey(kind) => mz ? MzRecordIdLimit : MvRecordIdLimit,
             _ => null
         };
+    }
+
+    /// <summary>True for the kinds a remap moves: map events, maps and the twelve database kinds (steps 1 and 2).</summary>
+    internal static bool IsRemappable(IdKind kind)
+    {
+        return kind is IdKind.MapEvent or IdKind.Map || DatabaseFiles.ContainsKey(kind);
+    }
+
+    /// <summary>The key of the database file that holds <paramref name="kind"/>, or <c>null</c> for a kind with no such file.</summary>
+    internal static string? DatabaseFileOf(IdKind kind)
+    {
+        return DatabaseFiles.TryGetValue(kind, out string? name) ? DataFolder + name : null;
+    }
+
+    /// <summary>The record kind of a database file directly inside <c>data/</c>; <c>MapInfos.json</c> is not one.</summary>
+    internal static IdKind? DatabaseKindOf(string fileKey)
+    {
+        if (!fileKey.StartsWith(DataFolder, StringComparison.Ordinal) || fileKey.IndexOf('/', DataFolder.Length) >= 0)
+        {
+            return null;
+        }
+
+        return DatabaseKinds.TryGetValue(fileKey[DataFolder.Length..], out IdKind kind) ? kind : null;
+    }
+
+    /// <summary>
+    /// GR-R7, the shape half of filler: <paramref name="record"/> is a database record shaped as the blank the MZ or
+    /// the MV editor writes when a maximum is raised. Every property but <c>id</c> matches the blank's; a property the
+    /// blank lacks is empty, and one the record lacks counts as the blank's. <see cref="FillerTest"/> adds the use half.
+    /// </summary>
+    internal static bool HasBlankShape(string fileKey, JToken? record)
+    {
+        if (DatabaseKindOf(fileKey) is null ||
+            record is not JObject item ||
+            item[NameProperty] is JValue { Value: string { Length: > 0 } })
+        {
+            return false;
+        }
+
+        IEnumerable<JProperty> properties = item.Properties().Where(property => property.Name != IdProperty).ToList();
+        return BlankRecords.For(FileName(fileKey), RpgMakerEngine.MZ) is { } mz && PropertiesMatch(properties, mz) ||
+               BlankRecords.For(FileName(fileKey), RpgMakerEngine.MV) is { } mv && PropertiesMatch(properties, mv);
+    }
+
+    private static bool PropertiesMatch(IEnumerable<JProperty> properties, JObject blank)
+    {
+        return properties.All(property => blank[property.Name] is { } expected ? MatchesBlank(property.Value, expected) : IsEmpty(property.Value));
+    }
+
+    private static bool MatchesBlank(JToken token, JToken blank)
+    {
+        return token switch
+        {
+            JObject item when blank is JObject shape => PropertiesMatch(item.Properties(), shape),
+            JArray list when blank is JArray shape =>
+                list.Count == 0 || (list.Count == shape.Count && list.Zip(shape).All(pair => MatchesBlank(pair.First, pair.Second))),
+            _ => JToken.DeepEquals(token, blank) || (IsEmpty(token) && IsEmpty(blank))
+        };
+    }
+
+    /// <summary>Null, an empty string, false, zero, or a list or object with nothing in it.</summary>
+    private static bool IsEmpty(JToken token)
+    {
+        return token switch
+        {
+            JValue { Type: JTokenType.Null or JTokenType.Undefined } => true,
+            JValue { Value: string text } => text.Length == 0,
+            JValue { Value: bool flag } => !flag,
+            JValue { Value: long whole } => whole == 0,
+            JValue { Value: double real } => real == 0,
+            JValue { Value: decimal exact } => exact == 0,
+            JContainer container => !container.HasValues,
+            _ => false
+        };
+    }
+
+    /// <summary>
+    /// GR-R8: a copy of the record that fills a hole in <paramref name="fileKey"/>, with <c>id</c> 0, or <c>null</c>
+    /// for a file whose holes stay <c>null</c> (<c>MapInfos.json</c>, a map's events, any file that is not a database file).
+    /// </summary>
+    internal static JObject? BlankRecord(string fileKey, RpgMakerEngine? engine)
+    {
+        return DatabaseKindOf(fileKey) is null ? null : BlankRecords.For(FileName(fileKey), engine);
     }
 
     /// <summary>
@@ -416,7 +537,8 @@ public static class RpgDataSchema
         return anyRecord;
     }
 
-    private static string TableOf(string fileKey)
+    /// <summary>The name of the policy and reference tables for a file: <see cref="MapTable"/> for a map, else the file name.</summary>
+    internal static string TableOf(string fileKey)
     {
         return IsMapFile(fileKey) ? MapTable : FileName(fileKey);
     }
