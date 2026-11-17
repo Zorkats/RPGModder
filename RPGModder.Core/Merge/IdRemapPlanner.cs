@@ -9,9 +9,10 @@ namespace RPGModder.Core.Merge;
 
 /// <summary>
 /// Decides which added ids move before composition (guide 3.11, GR-R3 to GR-R12): map events, maps and the twelve
-/// database kinds. The result does not depend on the order of any input.
+/// database kinds move; a switch or variable two mods share is only offered a move (IdRemapPlanner.States.cs). The
+/// result does not depend on the order of any input.
 /// </summary>
-public static class IdRemapPlanner
+public static partial class IdRemapPlanner
 {
     /// <summary>Trait 55, Slot Type, whose data 1 is Dual Wield (MV and MZ <c>Game_Actor.prototype.isDualWield</c>).</summary>
     private const int SlotTypeTrait = 55;
@@ -32,14 +33,20 @@ public static class IdRemapPlanner
     /// </param>
     /// <param name="engine">
     /// The game's engine, which sets the highest id a move may give (GR-R6): maps 2000 on MZ and 999 otherwise,
-    /// database records 9999 on MZ and 999 otherwise, events 999. An unknown engine (<c>null</c>) gets MV's limits.
+    /// database records 9999 on MZ and 999 otherwise, events 999, switches and variables 5000. An unknown engine
+    /// (<c>null</c>) gets MV's limits.
+    /// </param>
+    /// <param name="vanillaStates">
+    /// What <see cref="VanillaStateIds.Scan"/> found in vanilla's data files. Without it no switch or variable is
+    /// shared and none is offered a move; recorded entries for them still apply, and none counts as taken.
     /// </param>
     public static RemapPlan Plan(
         IReadOnlyList<RemapMod> installed,
         IReadOnlyList<IdRemap> recorded,
         IReadOnlyCollection<string> deployedMods,
         BaseFileSet baseFiles,
-        RpgMakerEngine? engine)
+        RpgMakerEngine? engine,
+        VanillaStateIds? vanillaStates = null)
     {
         ArgumentNullException.ThrowIfNull(installed);
         ArgumentNullException.ThrowIfNull(recorded);
@@ -58,7 +65,11 @@ public static class IdRemapPlanner
         var added = mods.ToDictionary(mod => mod.ChangeSet.ModId, mod => AddedIdIndex.Of(mod.ChangeSet), StringComparer.Ordinal);
         var deployed = new HashSet<string>(deployedMods, StringComparer.Ordinal);
         var diagnostics = new List<OperationDiagnostic>();
-        Dictionary<(string ModId, IdKind Kind, string Scope, int FromId), int> pins = Pins(mods, added, recorded, baseFiles, diagnostics);
+        var references = new Dictionary<string, ModReferences>(StringComparer.Ordinal);
+        var dualWield = new Lazy<bool>(() => IsDualWield(mods, baseFiles));
+        Func<RemapMod, ModReferences> referencesOf = mod => ReferencesOf(mod, dualWield, engine, references);
+        Dictionary<(string ModId, IdKind Kind, string Scope, int FromId), int> pins =
+            Pins(mods, added, recorded, baseFiles, engine, vanillaStates, referencesOf, diagnostics);
 
         var claims = new List<Claim>();
         foreach (RemapMod mod in mods.Where(item => item.Enabled))
@@ -71,10 +82,14 @@ public static class IdRemapPlanner
             }
         }
 
-        var targets = new Targets(added.Values.SelectMany(list => list).ToList(), recorded, baseFiles, engine);
-        var references = new Dictionary<string, ModReferences>(StringComparer.Ordinal);
-        var dualWield = new Lazy<bool>(() => IsDualWield(mods, baseFiles));
-        StaleReferences(mods, pins, mod => ReferencesOf(mod, dualWield, engine, references), diagnostics);
+        var targets = new Targets(
+            added.Values.SelectMany(list => list).ToList(),
+            recorded,
+            baseFiles,
+            engine,
+            vanillaStates,
+            kind => HighestStateId(mods, kind, referencesOf, RpgDataSchema.RemapLimit(kind, engine) ?? 0));
+        StaleReferences(mods, pins, referencesOf, diagnostics);
         var moves = new List<IdRemap>();
         var offers = new List<IdRemap>();
         IEnumerable<IGrouping<(IdKind Kind, string Scope, int Id), Claim>> groups = claims
@@ -93,7 +108,7 @@ public static class IdRemapPlanner
             (IdKind kind, string scope, _) = group.Key;
             foreach (Party party in parties)
             {
-                party.Classify(kind, claim => ReferencesOf(claim.Mod, dualWield, engine, references), claim => IsVanillaMapFile(kind, claim.Added.Id, baseFiles));
+                party.Classify(kind, claim => referencesOf(claim.Mod), claim => IsVanillaMapFile(kind, claim.Added.Id, baseFiles));
             }
 
             // GR-R4 and GR-R10: the parties that cannot move stay; when every party can, the first in order stays.
@@ -138,26 +153,41 @@ public static class IdRemapPlanner
             }
         }
 
+        var states = new StateResult();
+        PlanStates(new StateInputs(mods, pins, deployed, vanillaStates, referencesOf, targets, engine), states);
+        moves.AddRange(states.Moves);
+        offers.AddRange(states.Offers);
+        diagnostics.AddRange(states.Diagnostics);
+
         List<IdRemap> remaps = pins
             .Select(pin => new IdRemap(pin.Key.ModId, pin.Key.Kind, pin.Key.Scope, pin.Key.FromId, pin.Value))
             .Concat(moves)
             .ToList();
-        return new RemapPlan(Sorted(remaps), Sorted(moves), Sorted(offers), diagnostics);
+        return new RemapPlan(Sorted(remaps), Sorted(moves), Sorted(offers), diagnostics)
+        {
+            SharedStateIds = states.Shared,
+            OfferGroups = states.Groups
+        };
     }
 
     /// <summary>
     /// GR-R12: a recorded entry stands while its mod is enabled and still adds the old id. Two entries for one old
     /// id cannot both stand; the one with the lowest target does, so the input order never decides. An entry whose
     /// target vanilla now uses (a game update filled a hole) stands no more: the old id is planned again, and when no
-    /// other entry stands for it the plan carries <c>rules.remap_target_taken</c> (the owner, 2026-11-12).
+    /// other entry stands for it the plan carries <c>rules.remap_target_taken</c> (the owner, 2026-11-12). A switch or
+    /// variable entry stands while its mod still names the old id, and its target is taken when vanilla uses it.
     /// </summary>
     private static Dictionary<(string ModId, IdKind Kind, string Scope, int FromId), int> Pins(
         List<RemapMod> mods,
         Dictionary<string, IReadOnlyList<AddedId>> added,
         IReadOnlyList<IdRemap> recorded,
         BaseFileSet baseFiles,
+        RpgMakerEngine? engine,
+        VanillaStateIds? vanillaStates,
+        Func<RemapMod, ModReferences> referencesOf,
         List<OperationDiagnostic> diagnostics)
     {
+        Dictionary<string, RemapMod> byId = mods.ToDictionary(mod => mod.ChangeSet.ModId, StringComparer.Ordinal);
         var taken = new List<IdRemap>();
         var enabled = new HashSet<string>(mods.Where(mod => mod.Enabled).Select(mod => mod.ChangeSet.ModId), StringComparer.Ordinal);
         var pins = new Dictionary<(string ModId, IdKind Kind, string Scope, int FromId), int>();
@@ -165,15 +195,19 @@ public static class IdRemapPlanner
         foreach (IdRemap remap in Sorted(recorded))
         {
             (string ModId, IdKind Kind, string Scope, int FromId) from = (remap.ModId, remap.Kind, remap.Scope, remap.FromId);
+            // A switch or variable target past the limit only comes from a damaged profile; the game would pad its list up to it.
             if (!RpgDataSchema.IsRemappable(remap.Kind) || remap.ToId <= 0 || !enabled.Contains(remap.ModId) ||
-                !AddedIdIndex.IsActive(remap, added[remap.ModId]) || pins.ContainsKey(from) ||
+                (RpgDataSchema.IsStateKind(remap.Kind) && remap.ToId > RpgDataSchema.RemapLimit(remap.Kind, engine)) ||
+                !IsActive(remap, added[remap.ModId], () => referencesOf(byId[remap.ModId])) || pins.ContainsKey(from) ||
                 !targets.Add((remap.ModId, remap.Kind, remap.Scope, remap.ToId)))
             {
                 // Only a standing entry holds its target, so a losing duplicate leaves the next entry free.
                 continue;
             }
 
-            if (VanillaUses(remap.Kind, remap.Scope, remap.ToId, baseFiles))
+            if (RpgDataSchema.IsStateKind(remap.Kind)
+                    ? vanillaStates?.Of(remap.Kind).Contains(remap.ToId) == true
+                    : VanillaUses(remap.Kind, remap.Scope, remap.ToId, baseFiles))
             {
                 taken.Add(remap);
                 continue;
@@ -199,9 +233,22 @@ public static class IdRemapPlanner
     }
 
     /// <summary>
+    /// GR-R12: an entry stands while its mod still adds the old id, or, for a switch or variable, still names it
+    /// through the reference table (free text is no use, GR-R15). A switch or variable has no scope.
+    /// </summary>
+    internal static bool IsActive(IdRemap remap, IReadOnlyList<AddedId> added, Func<ModReferences> referencesOf)
+    {
+        return RpgDataSchema.IsStateKind(remap.Kind)
+            ? remap.Scope.Length == 0 && referencesOf().NamesState(remap.Kind, remap.FromId)
+            : AddedIdIndex.IsActive(remap, added);
+    }
+
+    /// <summary>
     /// GR-R12 over GR-R9 (the owner, 2026-11-12): an entry in force still applies when its mod now names the old id
     /// where a move cannot follow it (a mod update), since saves already hold the new id. The plan says so with
-    /// <c>rules.remap_stale_reference</c>, one per entry, in the order of <see cref="Sorted"/>.
+    /// <c>rules.remap_stale_reference</c>, one per entry, in the order of <see cref="Sorted"/>. A switch or variable
+    /// entry is stale too when a range of its mod holds the old id and the mod's entries do not move that range whole
+    /// (GR-R14).
     /// </summary>
     private static void StaleReferences(
         List<RemapMod> mods,
@@ -213,7 +260,8 @@ public static class IdRemapPlanner
         foreach (IdRemap remap in Sorted(standing))
         {
             RemapMod mod = mods.First(item => item.ChangeSet.ModId == remap.ModId);
-            if (!referencesOf(mod).Blocks(remap.Kind, remap.FromId))
+            ModReferences references = referencesOf(mod);
+            if (!references.Blocks(remap.Kind, remap.FromId) && !SplitsRange(remap, references, pins))
             {
                 continue;
             }
@@ -223,7 +271,7 @@ public static class IdRemapPlanner
                 DiagnosticCodes.RulesRemapStaleReference,
                 string.Create(
                     CultureInfo.InvariantCulture,
-                    $"Mod {remap.ModId}: {remap.Kind} {remap.FromId}{where} was recorded as moved to {remap.ToId}, but the mod now names {remap.FromId} where a move cannot follow it (a script, a note, a formula, a plugin's text code or a value of unclear kind). The entry still applies, so saves keep the record, but that place still reads {remap.FromId}."),
+                    $"Mod {remap.ModId}: {remap.Kind} {remap.FromId}{where} was recorded as moved to {remap.ToId}, but the mod now names {remap.FromId} where a move cannot follow it (a script, a note, a formula, a plugin's text code, a value of unclear kind or a range that does not move whole). The entry still applies, so saves keep the record, but that place still reads {remap.FromId}."),
                 DiagnosticSeverity.Warning,
                 remap.ModId));
         }
@@ -389,24 +437,43 @@ public static class IdRemapPlanner
         }
     }
 
-    /// <summary>GR-R5: the next free id per kind and scope, above vanilla, every installed mod and every entry.</summary>
+    /// <summary>
+    /// GR-R5: the next free id per kind and scope, above vanilla, every installed mod and every entry. For a switch or
+    /// variable, vanilla is its scanned ids and the length of its list of names.
+    /// </summary>
     private sealed class Targets
     {
         private readonly List<AddedId> _added;
         private readonly IReadOnlyList<IdRemap> _recorded;
         private readonly BaseFileSet _baseFiles;
         private readonly RpgMakerEngine? _engine;
+        private readonly VanillaStateIds? _states;
+        private readonly Func<IdKind, int> _modStates;
         private readonly Dictionary<(IdKind Kind, string Scope), int?> _next = new();
 
-        public Targets(List<AddedId> added, IReadOnlyList<IdRemap> recorded, BaseFileSet baseFiles, RpgMakerEngine? engine)
+        public Targets(
+            List<AddedId> added,
+            IReadOnlyList<IdRemap> recorded,
+            BaseFileSet baseFiles,
+            RpgMakerEngine? engine,
+            VanillaStateIds? states,
+            Func<IdKind, int> modStates)
         {
             _added = added;
             _recorded = recorded;
             _baseFiles = baseFiles;
             _engine = engine;
+            _states = states;
+            _modStates = modStates;
         }
 
         public int? Take(IdKind kind, string scope)
+        {
+            return TakeRun(kind, scope, 1);
+        }
+
+        /// <summary>The first of <paramref name="count"/> consecutive free ids, or <c>null</c> when the last would pass the limit.</summary>
+        public int? TakeRun(IdKind kind, string scope, int count)
         {
             if (!_next.TryGetValue((kind, scope), out int? next))
             {
@@ -419,26 +486,40 @@ public static class IdRemapPlanner
                 next++;
             }
 
+            _next[(kind, scope)] = next;
             int? limit = RpgDataSchema.RemapLimit(kind, _engine);
-            if (next is null || limit is null || next > limit)
+            if (next is null || limit is null || (long)next.Value + count - 1 > limit)
             {
-                _next[(kind, scope)] = next;
                 return null;
             }
 
-            _next[(kind, scope)] = next + 1;
+            _next[(kind, scope)] = next + count;
             return next;
         }
 
         private int? First(IdKind kind, string scope)
         {
-            JArray? vanilla = VanillaList(kind, scope, _baseFiles);
-            if (vanilla is null)
+            int used;
+            if (RpgDataSchema.IsStateKind(kind))
+            {
+                if (_states is null)
+                {
+                    return null;
+                }
+
+                IReadOnlyList<int> vanillaIds = _states.Of(kind);
+                used = Math.Max(Math.Max(0, _states.CountOf(kind) - 1), vanillaIds.Count == 0 ? 0 : vanillaIds.Max());
+                used = Math.Max(used, _modStates(kind));
+            }
+            else if (VanillaList(kind, scope, _baseFiles) is JArray vanilla)
+            {
+                used = Math.Max(0, vanilla.Count - 1);
+            }
+            else
             {
                 return null;
             }
 
-            int used = Math.Max(0, vanilla.Count - 1);
             foreach (AddedId id in _added.Where(item => item.Kind == kind && item.Scope == scope))
             {
                 used = Math.Max(used, id.Id);
@@ -449,7 +530,8 @@ public static class IdRemapPlanner
                 used = Math.Max(used, Math.Max(remap.FromId, remap.ToId));
             }
 
-            return used + 1;
+            // A damaged entry or id at the top of the range leaves no target, rather than one that wraps around.
+            return used == int.MaxValue ? null : used + 1;
         }
     }
 }

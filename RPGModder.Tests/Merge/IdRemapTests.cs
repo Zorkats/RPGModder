@@ -490,7 +490,9 @@ public sealed class IdRemapTests
     public static TheoryData<string> MapsByVariable => new()
     {
         "[201,1,5,6,7,0,0]",
-        "[202,0,1,5,6,7]"
+        "[202,0,1,5,6,7]",
+        "[201,2,5,6,7,0,0]",
+        "[202,0,-1,5,6,7]"
     };
 
     [Theory]

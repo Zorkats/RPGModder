@@ -16,6 +16,9 @@ public static class RpgDataSchema
     /// <summary>The file that carries <see cref="VersionIdField"/> (C-7).</summary>
     internal const string SystemFileKey = "data/system.json";
 
+    /// <summary>The reference table name of <see cref="SystemFileKey"/>.</summary>
+    internal const string SystemTable = "system.json";
+
     /// <summary>The field the game reads to tell its saves apart; the writer stamps it (C-7).</summary>
     internal const string VersionIdField = "versionId";
 
@@ -54,6 +57,14 @@ public static class RpgDataSchema
     /// checked, so this is the lower limit of the editors before it: a move that stays a choice is the safe side.
     /// </summary>
     private const int MvRecordIdLimit = 999;
+
+    /// <summary>The highest switch and variable id a move gives, on either engine (GR-R6): the editors stop at 5000.</summary>
+    private const int StateIdLimit = 5000;
+
+    /// <summary>The <c>System.json</c> lists that name the switches and the variables, one name per id.</summary>
+    internal const string SwitchNamesProperty = "switches";
+
+    internal const string VariableNamesProperty = "variables";
 
     /// <summary>The config save forms 2a decodes (GR-M10); <c>config.save</c> gives <c>merge.config_save_unsupported</c>.</summary>
     private const string MvConfigSave = "config.rpgsave";
@@ -370,14 +381,35 @@ public static class RpgDataSchema
             IdKind.Map => mz ? MzMapIdLimit : MvMapIdLimit,
             IdKind.MapEvent => MapEventIdLimit,
             _ when DatabaseFiles.ContainsKey(kind) => mz ? MzRecordIdLimit : MvRecordIdLimit,
+            IdKind.Switch or IdKind.Variable => StateIdLimit,
             _ => null
         };
     }
 
-    /// <summary>True for the kinds a remap moves: map events, maps and the twelve database kinds (steps 1 and 2).</summary>
+    /// <summary>
+    /// True for the kinds a remap moves: map events, maps and the twelve database kinds (steps 1 and 2), switches and
+    /// variables (step 3).
+    /// </summary>
     internal static bool IsRemappable(IdKind kind)
     {
-        return kind is IdKind.MapEvent or IdKind.Map || DatabaseFiles.ContainsKey(kind);
+        return kind is IdKind.MapEvent or IdKind.Map || DatabaseFiles.ContainsKey(kind) || IsStateKind(kind);
+    }
+
+    /// <summary>True for switches and variables, whose ids no record holds: vanilla names or references them, or not (GR-R2).</summary>
+    internal static bool IsStateKind(IdKind kind)
+    {
+        return kind is IdKind.Switch or IdKind.Variable;
+    }
+
+    /// <summary>The <c>System.json</c> list that names ids of a state kind, or <c>null</c> for any other kind.</summary>
+    internal static string? StateNamesOf(IdKind kind)
+    {
+        return kind switch
+        {
+            IdKind.Switch => SwitchNamesProperty,
+            IdKind.Variable => VariableNamesProperty,
+            _ => null
+        };
     }
 
     /// <summary>The key of the database file that holds <paramref name="kind"/>, or <c>null</c> for a kind with no such file.</summary>

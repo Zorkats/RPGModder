@@ -18,6 +18,7 @@ internal static class ReferenceTable
     private const string Enemies = "enemies.json";
     private const string States = "states.json";
     private const string Troops = "troops.json";
+    private const string CommonEvents = "commonevents.json";
     private const string MapInfos = "mapinfos.json";
     private const string SystemFile = "system.json";
 
@@ -39,8 +40,8 @@ internal static class ReferenceTable
         // Maps.
         Id(IdKind.Map, 201, 1, Is(0, 0)), // Transfer Player, direct
         Id(IdKind.Map, 202, 2, Is(1, 0)), // Set Vehicle Location, direct
-        ByVariable(IdKind.Map, 201, Is(0, 1)), // Transfer Player by variable
-        ByVariable(IdKind.Map, 202, Is(1, 1)), // Set Vehicle Location by variable
+        ByVariable(IdKind.Map, 201, NonZero(0)), // Transfer Player by variable
+        ByVariable(IdKind.Map, 202, NonZero(1)), // Set Vehicle Location by variable
         new(122, 4, PlaceUse.Constant, null, [Is(3, 0)]), // Control Variables: constant, for every by-variable row
         new(122, 4, PlaceUse.RandomRange, null, [Is(3, 2)]), // Control Variables: random p[4] to p[5], likewise
 
@@ -87,7 +88,7 @@ internal static class ReferenceTable
         ByVariable(IdKind.Troop, 301, Is(0, 1)), // ... by variable
         Id(IdKind.CommonEvent, 117, 0), // Common Event
 
-        // Actors. 311 to 318 and 326 name an actor when p[0] is 0, a variable when it is 1.
+        // Actors. 311 to 318 and 326 name an actor when p[0] is 0, a variable for any other value.
         Id(IdKind.Actor, 129, 0), // Change Party Member
         Id(IdKind.Actor, 303, 0), // Name Input Processing
         Id(IdKind.Actor, 111, 1, Is(0, 4)),
@@ -101,22 +102,22 @@ internal static class ReferenceTable
         Id(IdKind.Actor, 317, 1, Is(0, 0)),
         Id(IdKind.Actor, 318, 1, Is(0, 0)),
         Id(IdKind.Actor, 326, 1, Is(0, 0)),
-        ByVariable(IdKind.Actor, 311, Is(0, 1)),
-        ByVariable(IdKind.Actor, 312, Is(0, 1)),
-        ByVariable(IdKind.Actor, 313, Is(0, 1)),
-        ByVariable(IdKind.Actor, 314, Is(0, 1)),
-        ByVariable(IdKind.Actor, 315, Is(0, 1)),
-        ByVariable(IdKind.Actor, 316, Is(0, 1)),
-        ByVariable(IdKind.Actor, 317, Is(0, 1)),
-        ByVariable(IdKind.Actor, 318, Is(0, 1)),
-        ByVariable(IdKind.Actor, 326, Is(0, 1)),
+        ByVariable(IdKind.Actor, 311, NonZero(0)),
+        ByVariable(IdKind.Actor, 312, NonZero(0)),
+        ByVariable(IdKind.Actor, 313, NonZero(0)),
+        ByVariable(IdKind.Actor, 314, NonZero(0)),
+        ByVariable(IdKind.Actor, 315, NonZero(0)),
+        ByVariable(IdKind.Actor, 316, NonZero(0)),
+        ByVariable(IdKind.Actor, 317, NonZero(0)),
+        ByVariable(IdKind.Actor, 318, NonZero(0)),
+        ByVariable(IdKind.Actor, 326, NonZero(0)),
         Id(IdKind.Actor, 319, 0), // Change Equipment
         Id(IdKind.Actor, 320, 0), // Change Name
         Id(IdKind.Actor, 321, 0), // Change Class
         Id(IdKind.Actor, 322, 0), // Change Actor Images
         Id(IdKind.Actor, 324, 0), // Change Nickname
         Id(IdKind.Actor, 325, 0), // Change Profile
-        Id(IdKind.Actor, 339, 1, Is(0, 1)), // Force Action by an actor
+        Id(IdKind.Actor, 339, 1, NonZero(0)), // Force Action by an actor
 
         // Classes, animations, tilesets.
         Id(IdKind.Class, 321, 1),
@@ -124,6 +125,64 @@ internal static class ReferenceTable
         Id(IdKind.Animation, 212, 1), // Show Animation
         Id(IdKind.Animation, 337, 1), // Show Battle Animation
         Id(IdKind.Tileset, 282, 0), // Change Tileset
+
+        // Switches. 121 sets every switch from p[0] to p[1]; route commands 27 and 28 sit in move routes.
+        Range(IdKind.Switch, 121), // Control Switches
+        Id(IdKind.Switch, 111, 1, Is(0, 0)), // Conditional Branch: switch
+        Id(IdKind.Switch, 27, 0), // Switch ON, in a move route
+        Id(IdKind.Switch, 28, 0), // Switch OFF, in a move route
+
+        // Variables. 122 sets every variable from p[0] to p[1].
+        Range(IdKind.Variable, 122), // Control Variables
+        Id(IdKind.Variable, 122, 4, Is(3, 1)), // ... its operand, a variable
+        Id(IdKind.Variable, 111, 1, Is(0, 1)), // Conditional Branch: variable
+        Id(IdKind.Variable, 111, 3, Is(0, 1), NonZero(2)), // ... compared with a variable
+        Id(IdKind.Variable, 103, 0), // Input Number
+        Id(IdKind.Variable, 104, 0), // Select Item
+        Id(IdKind.Variable, 285, 0), // Get Location Info: the result
+
+        // Variables as operands ("by variable"): the value or the place comes from a variable. The engine reads a
+        // variable whenever the designation is not 0 (operateValue, iterateActorEx and the location commands), so
+        // these rows test p[n] != 0. 203, 301 and 122 pick among more forms and test the exact value.
+        Id(IdKind.Variable, 125, 2, NonZero(1)), // Change Gold
+        Id(IdKind.Variable, 126, 3, NonZero(2)), // Change Items
+        Id(IdKind.Variable, 127, 3, NonZero(2)), // Change Weapons
+        Id(IdKind.Variable, 128, 3, NonZero(2)), // Change Armors
+        Id(IdKind.Variable, 201, 1, NonZero(0)), // Transfer Player: map, x, y
+        Id(IdKind.Variable, 201, 2, NonZero(0)),
+        Id(IdKind.Variable, 201, 3, NonZero(0)),
+        Id(IdKind.Variable, 202, 2, NonZero(1)), // Set Vehicle Location: map, x, y
+        Id(IdKind.Variable, 202, 3, NonZero(1)),
+        Id(IdKind.Variable, 202, 4, NonZero(1)),
+        Id(IdKind.Variable, 203, 2, Is(1, 1)), // Set Event Location: x, y
+        Id(IdKind.Variable, 203, 3, Is(1, 1)),
+        Id(IdKind.Variable, 231, 4, NonZero(3)), // Show Picture: x, y
+        Id(IdKind.Variable, 231, 5, NonZero(3)),
+        Id(IdKind.Variable, 232, 4, NonZero(3)), // Move Picture: x, y
+        Id(IdKind.Variable, 232, 5, NonZero(3)),
+        Id(IdKind.Variable, 285, 3, Is(2, 1)), // Get Location Info: x, y
+        Id(IdKind.Variable, 285, 4, Is(2, 1)),
+        Id(IdKind.Variable, 285, 3, NotIn(2, 0, 1)) with { NotMz = true }, // ... MV reads any p[2] but 0 as variables
+        Id(IdKind.Variable, 285, 4, NotIn(2, 0, 1)) with { NotMz = true },
+        Id(IdKind.Variable, 301, 1, Is(0, 1)), // Battle Processing: the troop
+        Id(IdKind.Variable, 311, 1, NonZero(0)), // 311 to 318 and 326: the actor
+        Id(IdKind.Variable, 312, 1, NonZero(0)),
+        Id(IdKind.Variable, 313, 1, NonZero(0)),
+        Id(IdKind.Variable, 314, 1, NonZero(0)),
+        Id(IdKind.Variable, 315, 1, NonZero(0)),
+        Id(IdKind.Variable, 316, 1, NonZero(0)),
+        Id(IdKind.Variable, 317, 1, NonZero(0)),
+        Id(IdKind.Variable, 318, 1, NonZero(0)),
+        Id(IdKind.Variable, 326, 1, NonZero(0)),
+        Id(IdKind.Variable, 311, 4, NonZero(3)), // Change HP: the amount
+        Id(IdKind.Variable, 312, 4, NonZero(3)), // Change MP
+        Id(IdKind.Variable, 315, 4, NonZero(3)), // Change EXP
+        Id(IdKind.Variable, 316, 4, NonZero(3)), // Change Level
+        Id(IdKind.Variable, 317, 5, NonZero(4)), // Change Parameter
+        Id(IdKind.Variable, 326, 4, NonZero(3)), // Change TP
+        Id(IdKind.Variable, 331, 3, NonZero(2)), // Change Enemy HP
+        Id(IdKind.Variable, 332, 3, NonZero(2)), // Change Enemy MP
+        Id(IdKind.Variable, 342, 3, NonZero(2)), // Change Enemy TP
 
         // Free text (GR-R9): a whole number here stops a move of that id, of any kind.
         FreeText(355, 0), // Script
@@ -149,6 +208,9 @@ internal static class ReferenceTable
         new([Map], "encounterList[*].troopId", IdKind.Troop),
         new([Map], "pages[*].conditions.itemId", IdKind.Item),
         new([Map], "pages[*].conditions.actorId", IdKind.Actor),
+        new([Map], "pages[*].conditions.switch1Id", IdKind.Switch),
+        new([Map], "pages[*].conditions.switch2Id", IdKind.Switch),
+        new([Map], "pages[*].conditions.variableId", IdKind.Variable),
 
         // Database records.
         new([Actors], "classId", IdKind.Class),
@@ -159,11 +221,14 @@ internal static class ReferenceTable
         new([Skills, Items, Weapons], "animationId", IdKind.Animation),
         new([Enemies], "actions[*].skillId", IdKind.Skill),
         new([Enemies], "actions[*].conditionParam1", IdKind.State, new FieldTest("conditionType", [4])),
+        new([Enemies], "actions[*].conditionParam1", IdKind.Switch, new FieldTest("conditionType", [6])),
         new([Enemies], "dropItems[*].dataId", IdKind.Item, new FieldTest("kind", [1])),
         new([Enemies], "dropItems[*].dataId", IdKind.Weapon, new FieldTest("kind", [2])),
         new([Enemies], "dropItems[*].dataId", IdKind.Armor, new FieldTest("kind", [3])),
         new([Troops], "members[*].enemyId", IdKind.Enemy),
         new([Troops], "pages[*].conditions.actorId", IdKind.Actor),
+        new([Troops], "pages[*].conditions.switchId", IdKind.Switch),
+        new([CommonEvents], "switchId", IdKind.Switch),
 
         // Traits 13, 14 and 32 name a state; 35 (MZ), 43 and 44 a skill.
         new(TraitFiles, "traits[*].dataId", IdKind.State, new FieldTest("code", [13, 14, 32])),
@@ -203,9 +268,12 @@ internal static class ReferenceTable
     private static readonly HashSet<string> SiblingNames =
         new(FieldRows.Where(row => row.When is not null).Select(row => row.When!.Sibling), StringComparer.Ordinal);
 
-    /// <summary>The text codes that name an id inside message text, by their letters: <c>\N[n]</c> is an actor's name.</summary>
+    /// <summary>
+    /// The text codes that name an id inside message text, by their letters: <c>\N[n]</c> is an actor's name,
+    /// <c>\V[n]</c> a variable's value.
+    /// </summary>
     public static IReadOnlyDictionary<string, IdKind> TextCodes { get; } =
-        new Dictionary<string, IdKind>(StringComparer.Ordinal) { ["N"] = IdKind.Actor };
+        new Dictionary<string, IdKind>(StringComparer.Ordinal) { ["N"] = IdKind.Actor, ["V"] = IdKind.Variable };
 
     /// <summary>
     /// The text codes with a number that the MV and MZ message windows read themselves: a variable, an actor, a party
@@ -259,6 +327,12 @@ internal static class ReferenceTable
         return new CommandPlace(code, index, PlaceUse.Id, kind, when);
     }
 
+    /// <summary>A command that sets every id of <paramref name="kind"/> from <c>p[0]</c> to <c>p[1]</c> (GR-R14).</summary>
+    private static CommandPlace Range(IdKind kind, int code)
+    {
+        return new CommandPlace(code, 0, PlaceUse.Range, kind, []);
+    }
+
     /// <summary>A command that names an id of <paramref name="kind"/> through a variable (3.11).</summary>
     private static CommandPlace ByVariable(IdKind kind, int code, params ParameterTest[] when)
     {
@@ -273,6 +347,17 @@ internal static class ReferenceTable
     private static ParameterTest Is(int index, int value)
     {
         return new ParameterTest(index, value, value);
+    }
+
+    /// <summary>The engine's <c>p[n] === 0 ? constant : variable</c>: any whole number but 0 reads a variable.</summary>
+    private static ParameterTest NonZero(int index)
+    {
+        return NotIn(index, 0, 0);
+    }
+
+    private static ParameterTest NotIn(int index, int min, int max)
+    {
+        return new ParameterTest(index, min, max, Outside: true);
     }
 
     private static string SiblingPattern(FieldPlace row)
@@ -311,13 +396,21 @@ internal enum PlaceUse
     /// An id of the row's kind that a variable holds: a transfer or vehicle move to a map, a battle with a troop, an
     /// actor of 311 to 318 and 326.
     /// </summary>
-    ByVariable
+    ByVariable,
+
+    /// <summary>
+    /// The first id of a range of the row's kind, the next parameter being the last: every id from one to the other.
+    /// It moves only as a whole, onto consecutive ids in the same order (GR-R14).
+    /// </summary>
+    Range
 }
 
 /// <summary>
 /// One command row: parameter <c>Index</c> of command <c>Code</c>, when every test holds. <c>SecondSlot</c> marks
 /// the second equip slot, which holds a weapon for a dual-wield actor. <c>MzOnly</c> marks a row only MZ reads so;
-/// on any other engine the id is of no known kind.
+/// on any other engine the id is of no known kind. <c>NotMz</c> marks a row MV reads so and MZ does not: on MZ it
+/// is no reference, and on any other engine the id is of no known kind, since MV and an unknown engine are not told
+/// apart.
 /// </summary>
 internal sealed record CommandPlace(
     int Code,
@@ -326,10 +419,14 @@ internal sealed record CommandPlace(
     IdKind? Kind,
     ParameterTest[] When,
     bool SecondSlot = false,
-    bool MzOnly = false);
+    bool MzOnly = false,
+    bool NotMz = false);
 
-/// <summary>Parameter <c>Index</c> holds a whole number from <c>Min</c> to <c>Max</c>.</summary>
-internal readonly record struct ParameterTest(int Index, int Min, int Max);
+/// <summary>
+/// Parameter <c>Index</c> holds a whole number from <c>Min</c> to <c>Max</c>, or, when <c>Outside</c> is set, any whole
+/// number out of that range.
+/// </summary>
+internal readonly record struct ParameterTest(int Index, int Min, int Max, bool Outside = false);
 
 /// <summary>
 /// One field row: the leaves of <c>Tables</c> whose path pattern is <c>Pattern</c> (relative to the record, or to

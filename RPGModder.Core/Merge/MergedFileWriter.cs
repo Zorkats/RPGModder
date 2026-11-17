@@ -97,6 +97,7 @@ public static class MergedFileWriter
 
         JToken root = Render(file, baseFile, fileOps);
         FillHoles(file, root, engine);
+        FillNameHoles(file, root);
         if (file == RpgDataSchema.SystemFileKey && systemVersionId is not null)
         {
             SetVersionId(root, systemVersionId.Value);
@@ -122,6 +123,34 @@ public static class MergedFileWriter
             {
                 blank["id"] = index;
                 records[index] = blank;
+            }
+        }
+    }
+
+    /// <summary>
+    /// A switch or variable name past the end of vanilla's list pads it with <c>null</c>; the editor writes an empty
+    /// name there, so each <c>null</c> above index 0 in <c>System.json</c>'s <c>switches</c> and <c>variables</c> becomes one.
+    /// </summary>
+    private static void FillNameHoles(string file, JToken root)
+    {
+        if (file != RpgDataSchema.SystemFileKey || root is not JObject system)
+        {
+            return;
+        }
+
+        foreach (string property in new[] { RpgDataSchema.SwitchNamesProperty, RpgDataSchema.VariableNamesProperty })
+        {
+            if (system[property] is not JArray names)
+            {
+                continue;
+            }
+
+            for (int index = 1; index < names.Count; index++)
+            {
+                if (names[index].Type == JTokenType.Null)
+                {
+                    names[index] = "";
+                }
             }
         }
     }

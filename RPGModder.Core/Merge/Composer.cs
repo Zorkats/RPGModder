@@ -15,8 +15,9 @@ public static class Composer
 {
     /// <param name="remapPlan">
     /// The plan, when lane A ran <see cref="IdRemapPlanner"/>: an <c>IdClash</c> one of its offers settles lists
-    /// <see cref="ResolutionKind.Remap"/> and carries <c>rules.remap_unchecked</c> (GR-R11), and its diagnostics join
-    /// the plan's.
+    /// <see cref="ResolutionKind.Remap"/> and carries <c>rules.remap_unchecked</c> (GR-R11); each switch or variable
+    /// it found shared is a <c>StateIdOverlap</c>, which lists <c>Remap</c> too when an offer settles it and takes in
+    /// the mods' different names for it (GR-R15); and its diagnostics join the plan's.
     /// </param>
     public static MergePlan Compose(
         IReadOnlyList<ModChangeSet> changeSets,
@@ -47,7 +48,8 @@ public static class Composer
 
         // The writer stamps versionId into System.json (C-7), so a broken one must stop the plan here, not there.
         BaseFile? system = baseFiles.Find(RpgDataSchema.SystemFileKey);
-        if (system is not null && !ChangeSetBuilder.TryReadBase(system, out _, out OperationDiagnostic? systemProblem))
+        JToken? systemRoot = null;
+        if (system is not null && !ChangeSetBuilder.TryReadBase(system, out systemRoot, out OperationDiagnostic? systemProblem))
         {
             diagnostics.Add(systemProblem);
         }
@@ -59,9 +61,17 @@ public static class Composer
         var ops = new List<MergedOp>();
         var collisions = new List<(Collision Collision, CollisionOutcome Outcome)>();
         IReadOnlyList<IdRemap> offers = remapPlan?.Offers ?? [];
-        foreach (List<OpGroup> cluster in Cluster(DropFiller(Group(ordered), changeSets, priorities)))
+        List<OpGroup> groups = DropFiller(Group(ordered), changeSets, priorities);
+        groups = FoldSharedNames(DropPaddingNames(groups, systemRoot), remapPlan, priorities);
+        foreach (List<OpGroup> cluster in Cluster(groups))
         {
             ComposeCluster(cluster, choices, priorities, offers, ops, collisions, diagnostics);
+        }
+
+        foreach (SharedStateId shared in remapPlan?.SharedStateIds ?? [])
+        {
+            Collision collision = OfferRemaps(StateOverlap(shared), offers, diagnostics);
+            collisions.Add((collision, Decide(collision, choices, diagnostics)));
         }
 
         ComposePluginOrder(ops, choices, priorities, collisions, diagnostics);
@@ -136,6 +146,108 @@ public static class Composer
         }
 
         return groups;
+    }
+
+    /// <summary>
+    /// A mod that names a switch or variable past the end of vanilla's list pads the list with empty names up to it,
+    /// so an empty name where vanilla has none only pads: it yields to another mod's name at that id instead of
+    /// clashing with it. Two different names still clash.
+    /// </summary>
+    private static List<OpGroup> DropPaddingNames(List<OpGroup> groups, JToken? system)
+    {
+        foreach (OpGroup group in groups)
+        {
+            if (group.Variants.Count < 2 || !TryNameSlot(group, out string list, out int index) ||
+                !IsEmptyName((system?[list] as JArray)?.ElementAtOrDefault(index)))
+            {
+                continue;
+            }
+
+            if (group.Variants.Any(variant => !IsPadding(variant.Op)))
+            {
+                group.Variants.RemoveAll(variant => IsPadding(variant.Op));
+            }
+        }
+
+        return groups;
+    }
+
+    /// <summary>
+    /// GR-R15 (the owner, 2026-11-12): different names for a switch or variable the mods share are part of its
+    /// <c>StateIdOverlap</c>, not a clash of their own. The name of a mod that stays is kept, the latest in profile
+    /// order when several stay; a mod that takes its offered move carries its own name to the new id.
+    /// </summary>
+    private static List<OpGroup> FoldSharedNames(List<OpGroup> groups, RemapPlan? plan, Dictionary<string, int> priorities)
+    {
+        if (plan is null || plan.SharedStateIds.Count == 0)
+        {
+            return groups;
+        }
+
+        foreach (OpGroup group in groups)
+        {
+            if (group.Variants.Count < 2 || !TryNameSlot(group, out string list, out int id))
+            {
+                continue;
+            }
+
+            IdKind kind = list == RpgDataSchema.SwitchNamesProperty ? IdKind.Switch : IdKind.Variable;
+            SharedStateId? shared = plan.SharedStateIds.FirstOrDefault(item => item.Kind == kind && item.Id == id);
+
+            // Only the names the sharing mods give fold. Anything else at the slot (another mod's name, a list cut
+            // short, a null) still clashes.
+            if (shared is null || group.Variants.Any(variant =>
+                    !IsName(variant.Op) || variant.ModIds.Any(modId => !shared.ModIds.Contains(modId, StringComparer.Ordinal))))
+            {
+                continue;
+            }
+
+            bool Moves(string modId) => plan.Offers.Any(offer => offer.ModId == modId && offer.Kind == kind && offer.FromId == id);
+            List<string> staying = group.Variants.SelectMany(variant => variant.ModIds).Where(modId => !Moves(modId)).ToList();
+            Variant kept = staying.Count == 0
+                ? Latest(group.Variants, priorities)
+                : group.Variants.First(variant => variant.ModIds.Contains(LatestMod(staying, priorities), StringComparer.Ordinal));
+            group.Variants.RemoveAll(variant => !ReferenceEquals(variant, kept));
+        }
+
+        return groups;
+    }
+
+    /// <summary>True when <paramref name="group"/> sets one name of <c>System.json</c>'s <c>switches</c> or <c>variables</c>.</summary>
+    private static bool TryNameSlot(OpGroup group, out string list, out int index)
+    {
+        list = "";
+        index = 0;
+        if (group.Key != RemapPlaces.StateKey || MergePath.IsPseudoLeaf(group.Path))
+        {
+            return false;
+        }
+
+        IReadOnlyList<PathSegment> segments = MergePath.Parse(group.Path);
+        if (segments.Count != 2 || segments[1].Name is not null ||
+            segments[0].Name is not (RpgDataSchema.SwitchNamesProperty or RpgDataSchema.VariableNamesProperty))
+        {
+            return false;
+        }
+
+        list = segments[0].Name!;
+        index = segments[1].Index;
+        return true;
+    }
+
+    private static bool IsName(ChangeOp op)
+    {
+        return op.Kind == ChangeKind.SetLeaf && op.Value is JValue { Type: JTokenType.String };
+    }
+
+    private static bool IsPadding(ChangeOp op)
+    {
+        return op.Kind == ChangeKind.SetLeaf && op.Value is JValue { Value: string { Length: 0 } };
+    }
+
+    private static bool IsEmptyName(JToken? name)
+    {
+        return name is null || name.Type == JTokenType.Null || name is JValue { Value: string { Length: 0 } };
     }
 
     /// <summary>
@@ -263,9 +375,23 @@ public static class Composer
     /// <summary>The variant of the mod latest in profile order; equal priorities fall back to the mod id that sorts last.</summary>
     private static Variant LatestInProfileOrder(OpGroup group, Dictionary<string, int> priorities)
     {
-        return group.Variants
+        return Latest(group.Variants, priorities);
+    }
+
+    private static Variant Latest(IEnumerable<Variant> variants, Dictionary<string, int> priorities)
+    {
+        return variants
             .OrderByDescending(variant => variant.ModIds.Max(id => priorities[id]))
             .ThenByDescending(variant => variant.ModIds.Max(StringComparer.Ordinal), StringComparer.Ordinal)
+            .First();
+    }
+
+    /// <summary>The mod latest in profile order, with the same tie-break as <see cref="Latest"/>.</summary>
+    private static string LatestMod(IEnumerable<string> modIds, Dictionary<string, int> priorities)
+    {
+        return modIds
+            .OrderByDescending(id => priorities[id])
+            .ThenByDescending(id => id, StringComparer.Ordinal)
             .First();
     }
 
@@ -403,7 +529,9 @@ public static class Composer
     /// <summary>
     /// GR-R11: an <c>IdClash</c> an offer settles lists <c>Remap</c>, stays blocking and has no default, and each
     /// offer carries the warning once, though a map offer settles two collisions (its file and its tree record).
-    /// Lane A carries a chosen <c>Remap</c> out by recording the offer (seam 4.3).
+    /// A <c>StateIdOverlap</c> an offer settles lists <c>Remap</c> and keeps its default; the planner warns of its
+    /// plugin numbers itself, since such an offer is made for every move. Lane A carries a chosen <c>Remap</c> out by
+    /// recording <see cref="RemapPlan.OffersFor"/> (seam 4.3).
     /// </summary>
     private static Collision OfferRemaps(Collision collision, IReadOnlyList<IdRemap> offers, List<OperationDiagnostic> diagnostics)
     {
@@ -413,7 +541,7 @@ public static class Composer
             return collision;
         }
 
-        foreach (IdRemap offer in settling)
+        foreach (IdRemap offer in settling.Where(item => !RpgDataSchema.IsStateKind(item.Kind)))
         {
             diagnostics.Add(new OperationDiagnostic(
                 DiagnosticCodes.RulesRemapUnchecked,
@@ -482,6 +610,26 @@ public static class Composer
 
         string id = CollisionId(kind, head.Key, head.Path, mods);
         return new Collision(id, kind, head.Key, head.Path, mods, IsBlocking(kind), allowed, Fingerprint(cluster));
+    }
+
+    /// <summary>
+    /// GR-R15: a switch or variable the mods share, on its name in <c>System.json</c>. Sharing may be meant, so it is
+    /// a warning the player accepts by default; no value takes part, so the fingerprint is the id and the mods.
+    /// </summary>
+    private static Collision StateOverlap(SharedStateId shared)
+    {
+        string path = RemapPlaces.StatePath(shared.Kind, shared.Id);
+        const CollisionKind kind = CollisionKind.StateIdOverlap;
+        var entries = new JArray(shared.Kind.ToString(), shared.Id, new JArray(shared.ModIds.ToArray<object>()));
+        return new Collision(
+            CollisionId(kind, RemapPlaces.StateKey, path, shared.ModIds),
+            kind,
+            RemapPlaces.StateKey,
+            path,
+            shared.ModIds,
+            IsBlocking(kind),
+            AllowedFor(kind),
+            MergeJson.Sha256Hex(MergeJson.Write(entries)));
     }
 
     /// <summary>
@@ -670,7 +818,12 @@ public static class Composer
             {
                 if (variant.Op.Kind == op.Kind && ValuesEqual(variant.Op.Value, op.Value))
                 {
-                    variant.ModIds.Add(modId);
+                    // One mod may hold two equal ops at a place: a moved name over its own empty one.
+                    if (!variant.ModIds.Contains(modId, StringComparer.Ordinal))
+                    {
+                        variant.ModIds.Add(modId);
+                    }
+
                     return;
                 }
             }

@@ -1,21 +1,34 @@
 namespace RPGModder.Core.Merge;
 
-/// <summary>The places an added id occupies in a change set, so an offer can be matched to its <c>IdClash</c>.</summary>
+/// <summary>
+/// The places an added id occupies in a change set, so an offer can be matched to its <c>IdClash</c>, and the place
+/// that stands for a shared switch or variable, so an offer can be matched to its <c>StateIdOverlap</c>.
+/// </summary>
 internal static class RemapPlaces
 {
+    /// <summary>The key of every <c>StateIdOverlap</c>: <c>System.json</c> as a whole.</summary>
+    public static RecordKey StateKey { get; } = new(RpgDataSchema.SystemFileKey, RecordKey.WholeFile);
+
     /// <summary>
     /// True when <paramref name="remap"/> moves the id <paramref name="collision"/> is about: a map event is the
     /// record <c>event:n</c> of its map; a map is its file on <c>*</c> and its <c>MapInfos</c> record; a database
-    /// record is the record <c>id:n</c> of its file.
+    /// record is the record <c>id:n</c> of its file; a switch or variable is its name in <c>System.json</c>.
     /// </summary>
     public static bool Settles(IdRemap remap, Collision collision)
     {
-        if (collision.Kind != CollisionKind.IdClash || !collision.ModIds.Contains(remap.ModId, StringComparer.Ordinal))
+        bool stateKind = RpgDataSchema.IsStateKind(remap.Kind);
+        CollisionKind expected = stateKind ? CollisionKind.StateIdOverlap : CollisionKind.IdClash;
+        if (collision.Kind != expected || !collision.ModIds.Contains(remap.ModId, StringComparer.Ordinal))
         {
             return false;
         }
 
         RecordKey key = collision.Key;
+        if (stateKind)
+        {
+            return key == StateKey && collision.Path == StatePath(remap.Kind, remap.FromId);
+        }
+
         return remap.Kind switch
         {
             IdKind.MapEvent => key.File == remap.Scope && key.Record == RecordKey.ForEvent(remap.FromId),
@@ -23,5 +36,11 @@ internal static class RemapPlaces
                           (key.File == RpgDataSchema.MapInfosKey && key.Record == RecordKey.ForIndex(remap.FromId)),
             _ => RpgDataSchema.DatabaseFileOf(remap.Kind) is { } file && key.File == file && key.Record == RecordKey.ForIndex(remap.FromId)
         };
+    }
+
+    /// <summary>The path of a <c>StateIdOverlap</c>: the name of the id, <c>switches[n]</c> or <c>variables[n]</c>.</summary>
+    public static string StatePath(IdKind kind, int id)
+    {
+        return MergePath.Index(RpgDataSchema.StateNamesOf(kind) ?? throw new ArgumentOutOfRangeException(nameof(kind)), id);
     }
 }

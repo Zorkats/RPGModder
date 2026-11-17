@@ -1,11 +1,12 @@
 namespace RPGModder.Core.Merge;
 
-/// <summary>What <see cref="ReferenceMap.Scan"/> found in one mod: the numbers a remap cannot rewrite.</summary>
+/// <summary>What <see cref="ReferenceMap.Scan"/> found in one mod: the numbers a remap cannot rewrite, and the ids it uses.</summary>
 internal sealed class ModReferences
 {
     private readonly Dictionary<IdKind, HashSet<long>> _ambiguous = new();
     private readonly HashSet<IdKind> _unknownIds = new();
     private readonly Dictionary<IdKind, HashSet<long>> _used = new();
+    private readonly List<(IdKind Kind, int First, int Last)> _ranges = new();
 
     /// <summary>Whole numbers in the change set's free text (GR-R9).</summary>
     public HashSet<long> FreeTextNumbers { get; } = new();
@@ -20,8 +21,8 @@ internal sealed class ModReferences
     public HashSet<long> PluginScriptNumbers { get; } = new();
 
     /// <summary>
-    /// The kinds the mod names through a variable: a map (201 with <c>p[0]</c> 1, 202 with <c>p[1]</c> 1), a troop
-    /// (301 with <c>p[0]</c> 1), an actor (311 to 318 and 326 with <c>p[0]</c> 1).
+    /// The kinds the mod names through a variable: a map (201 with <c>p[0]</c> not 0, 202 with <c>p[1]</c> not 0), a
+    /// troop (301 with <c>p[0]</c> 1), an actor (311 to 318 and 326 with <c>p[0]</c> not 0).
     /// </summary>
     public HashSet<IdKind> ByVariableKinds { get; } = new();
 
@@ -63,15 +64,75 @@ internal sealed class ModReferences
     }
 
     /// <summary>
+    /// Records a range command (121, 122) that sets every id of <paramref name="kind"/> from <paramref name="first"/>
+    /// to <paramref name="last"/>. A range whose first end is past its last names no id, as the game loops no time.
+    /// </summary>
+    public void AddRange(IdKind kind, int first, int last)
+    {
+        _ranges.Add((kind, first, last));
+    }
+
+    /// <summary>The ranges of <paramref name="kind"/> the change set holds, as their ends: <c>p[0]</c>, then <c>p[1]</c>.</summary>
+    public IEnumerable<(int First, int Last)> RangesOf(IdKind kind)
+    {
+        return _ranges.Where(range => range.Kind == kind).Select(range => (range.First, range.Last));
+    }
+
+    /// <summary>
     /// True when the change set may refer to <paramref name="id"/> of <paramref name="kind"/>: a place a remap
-    /// rewrites, a place of no known kind, or free text (GR-R7).
+    /// rewrites, a range that holds it, a place of no known kind, or free text (GR-R7).
     /// </summary>
     public bool Uses(IdKind kind, int id)
     {
         return FreeTextNumbers.Contains(id) ||
                (_used.TryGetValue(kind, out HashSet<long>? ids) && ids.Contains(id)) ||
+               InRange(kind, id) ||
                (_ambiguous.TryGetValue(kind, out HashSet<long>? unknown) && unknown.Contains(id)) ||
                ByVariable(kind, id);
+    }
+
+    /// <summary>
+    /// True when the change set names switch or variable <paramref name="id"/> as <see cref="StateIds"/> counts it.
+    /// Free text names no kind, so a number in a note keeps no entry in force.
+    /// </summary>
+    public bool NamesState(IdKind kind, int id)
+    {
+        return id >= 1 &&
+               ((_used.TryGetValue(kind, out HashSet<long>? ids) && ids.Contains(id)) ||
+                (_ambiguous.TryGetValue(kind, out HashSet<long>? unknown) && unknown.Contains(id)) ||
+                InRange(kind, id));
+    }
+
+    /// <summary>
+    /// The switch or variable ids the change set names through the reference table, from 1 to
+    /// <paramref name="limit"/>: places a remap rewrites, ranges, places of no known kind, names in
+    /// <c>System.json</c>. Free text is left out, as it names no kind.
+    /// </summary>
+    public SortedSet<int> StateIds(IdKind kind, int limit)
+    {
+        var ids = new SortedSet<int>();
+        foreach (long id in _used.GetValueOrDefault(kind, []).Concat(_ambiguous.GetValueOrDefault(kind, [])))
+        {
+            if (id >= 1 && id <= limit)
+            {
+                ids.Add((int)id);
+            }
+        }
+
+        foreach ((int first, int last) in RangesOf(kind))
+        {
+            for (int id = Math.Max(first, 1); id <= Math.Min(last, limit); id++)
+            {
+                ids.Add(id);
+            }
+        }
+
+        return ids;
+    }
+
+    private bool InRange(IdKind kind, int id)
+    {
+        return id >= 1 && _ranges.Exists(range => range.Kind == kind && range.First <= id && id <= range.Last);
     }
 
     /// <summary>True when the change set refers to <paramref name="id"/> where a remap cannot follow it (GR-R9).</summary>
