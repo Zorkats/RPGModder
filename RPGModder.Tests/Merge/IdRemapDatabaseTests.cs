@@ -3,6 +3,7 @@ using RPGModder.Core.Merge;
 using RPGModder.Core.Models;
 using RPGModder.Core.Operations;
 using RPGModder.Core.Services;
+using RPGModder.Tests.Support;
 using static RPGModder.Tests.Merge.MergeTestKit;
 
 namespace RPGModder.Tests.Merge;
@@ -255,6 +256,7 @@ public sealed class IdRemapDatabaseTests
         { IdKind.Actor, 324, "[3,\"Bold\"]", "[4,\"Bold\"]" },
         { IdKind.Actor, 325, "[3,\"Tall\"]", "[4,\"Tall\"]" },
         { IdKind.Actor, 339, "[1,3,1,-1]", "[1,4,1,-1]" },
+        { IdKind.Actor, 339, "[2,3,1,-1]", "[2,4,1,-1]" },
         { IdKind.Class, 321, "[1,3,false]", "[1,4,false]" },
         { IdKind.Class, 111, "[4,1,2,3]", "[4,1,2,4]" },
         { IdKind.Animation, 212, "[0,3,false]", "[0,4,false]" },
@@ -476,7 +478,11 @@ public sealed class IdRemapDatabaseTests
         { IdKind.Actor, 316, "[1,5,0,0,1,false]" },
         { IdKind.Actor, 317, "[1,5,0,0,0,1]" },
         { IdKind.Actor, 318, "[1,5,0,1]" },
-        { IdKind.Actor, 326, "[1,5,0,0,10]" }
+        { IdKind.Actor, 326, "[1,5,0,0,10]" },
+
+        // Any designation but 0 reads a variable.
+        { IdKind.Actor, 311, "[2,5,0,0,10,false]" },
+        { IdKind.Actor, 314, "[-1,5]" }
     };
 
     /// <summary>The command names its id through variable 5, which a Control Variables sets to <paramref name="constant"/>.</summary>
@@ -1000,6 +1006,50 @@ public sealed class IdRemapDatabaseTests
             Assert.True(RpgDataSchema.HasBlankShape("data/animations.json", records[id]));
         });
         Assert.Equal("B", records[3]!["name"]!.Value<string>());
+    }
+
+    public static TheoryData<IdKind, RpgMakerEngine> DatabaseKindsOnBothEngines()
+    {
+        var data = new TheoryData<IdKind, RpgMakerEngine>();
+        foreach (IdKind kind in FileOfKind.Keys)
+        {
+            data.Add(kind, RpgMakerEngine.MZ);
+            data.Add(kind, RpgMakerEngine.MV);
+        }
+
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(DatabaseKindsOnBothEngines))]
+    public void Write_RecordedTargetPastTheEnd_FillsTheHoleWithBlankRecordsTheTestInterpreterLoads(IdKind kind, RpgMakerEngine engine)
+    {
+        var game = new Game();
+        (RemapMod a, RemapMod b) = game.Clash(kind);
+        string file = FileOfKind[kind];
+
+        RemapPlan plan = IdRemapPlanner.Plan([a, b], [new IdRemap("b-oak", kind, "", 3, 6)], ["a-tin", "b-oak"], game.Bases, engine);
+        MergePlan merged = ComposeRemapped(plan, game, a, b);
+        string text = MergedFileWriter.Write(merged, game.Bases, null, engine)
+            .Single(item => string.Equals(item.File, file, StringComparison.OrdinalIgnoreCase)).Text!;
+
+        JArray records = TestInterpreter.LoadDatabase(file, text);
+        Assert.Equal([$"b-oak|{kind}||3>6"], plan.Remaps.Select(Entry));
+        Assert.Equal(7, records.Count);
+        Assert.All([4, 5], id => Assert.True(RpgDataSchema.HasBlankShape(file.ToLowerInvariant(), records[id]), $"{file} {id}"));
+        Assert.Equal(("A", "B"), (records[3]!["name"]!.Value<string>(), records[6]!["name"]!.Value<string>()));
+    }
+
+    [Fact]
+    public void Plan_RecordedTargetAtTheTopOfTheRange_LeavesNoTargetRatherThanWrapping()
+    {
+        var game = new Game();
+        (RemapMod a, RemapMod b) = game.Clash(IdKind.Actor);
+
+        RemapPlan plan = IdRemapPlanner.Plan([a, b], [new IdRemap("z-old", IdKind.Actor, "", 9, int.MaxValue)], [], game.Bases, RpgMakerEngine.MZ);
+
+        Assert.DoesNotContain(plan.Remaps, remap => remap.ToId < 1);
+        Assert.Empty(plan.NewEntries);
     }
 
     [Fact]

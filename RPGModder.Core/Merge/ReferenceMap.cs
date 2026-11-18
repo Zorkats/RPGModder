@@ -7,8 +7,9 @@ namespace RPGModder.Core.Merge;
 
 /// <summary>
 /// Where an id is referenced (guide 3.11). One walker reads a change set with the rows of <see cref="ReferenceTable"/>:
-/// <see cref="Scan"/> collects what a remap cannot rewrite (GR-R9), <see cref="Rewrite"/> moves every reference the
-/// rows name. Only whole numbers above 0 are ids.
+/// <see cref="Scan"/> collects what a remap cannot rewrite (GR-R9) and the switches and variables a mod uses (GR-R2),
+/// <see cref="Rewrite"/> moves every reference the rows name, whole ranges (GR-R14) and the names in <c>System.json</c>
+/// with them. Only whole numbers above 0 are ids.
 /// </summary>
 internal static class ReferenceMap
 {
@@ -63,21 +64,103 @@ internal static class ReferenceMap
     {
         JToken? value = op.Value?.DeepClone();
         RecordKey key = op.Kind == ChangeKind.AddRecord && op.Path.Length == 0 ? OwnKey(op.Key, value, table) : op.Key;
+        string path = op.Key.File == RpgDataSchema.SystemFileKey ? OwnNamePath(op.Path, table) : op.Path;
         if (value is not null && !MergePath.IsPseudoLeaf(op.Path))
         {
             // Event references are scoped to the map file the commands sit in, so the op's own file decides.
             Dictionary<int, int>? events = table.Events.GetValueOrDefault(op.Key.File);
             new Walker(op, siblings, dualWield: false, mz: true, hit => Move(hit, table, events)).Walk(value);
+            if (op.Key.File == RpgDataSchema.SystemFileKey)
+            {
+                MoveNameLists(op.Path, value, table);
+            }
         }
 
-        if (key == op.Key && JToken.DeepEquals(value, op.Value))
+        if (key == op.Key && path == op.Path && JToken.DeepEquals(value, op.Value))
         {
             return op;
         }
 
         // A whole new file whose content changed loses its source file, so it is written as text.
         string? source = op.Kind == ChangeKind.AddRecord && op.Key.IsWholeFile ? null : op.SourceFile;
-        return op with { Key = key, Value = value, SourceFile = source };
+        return op with { Key = key, Path = path, Value = value, SourceFile = source };
+    }
+
+    /// <summary>
+    /// The path of a <c>System.json</c> op on one name of a switch or variable that moves (<c>switches[n]</c>): the
+    /// name goes with its id. Any other path is returned as it was.
+    /// </summary>
+    private static string OwnNamePath(string path, RemapTable table)
+    {
+        if (path.Length == 0 || MergePath.IsPseudoLeaf(path))
+        {
+            return path;
+        }
+
+        IReadOnlyList<PathSegment> segments = MergePath.Parse(path);
+        if (segments.Count != 2 || segments[1].Name is not null || StateKindOfNames(segments[0].Name) is not { } kind ||
+            table.MovesOf(kind) is not { } moves || !moves.TryGetValue(segments[1].Index, out int newId))
+        {
+            return path;
+        }
+
+        return MergePath.Index(segments[0].Name!, newId);
+    }
+
+    /// <summary>
+    /// A <c>System.json</c> op whose value holds a whole list of names (the file, or <c>switches</c> itself): each
+    /// moved id's name goes to its new index, the old index is left empty, and the list grows with empty names.
+    /// </summary>
+    private static void MoveNameLists(string path, JToken value, RemapTable table)
+    {
+        if (path.Length == 0 && value is JObject system)
+        {
+            foreach (IdKind kind in new[] { IdKind.Switch, IdKind.Variable })
+            {
+                if (system[RpgDataSchema.StateNamesOf(kind)!] is JArray names && table.MovesOf(kind) is { } moves)
+                {
+                    MoveNames(names, moves);
+                }
+            }
+        }
+        else if (StateKindOfNames(path) is { } kind && value is JArray names && table.MovesOf(kind) is { } moves)
+        {
+            MoveNames(names, moves);
+        }
+    }
+
+    private static void MoveNames(JArray names, Dictionary<int, int> moves)
+    {
+        List<(int To, JToken Name)> moved = moves
+            .Where(move => move.Key < names.Count)
+            .OrderBy(move => move.Key)
+            .Select(move => (move.Value, names[move.Key].DeepClone()))
+            .ToList();
+        foreach (int from in moves.Keys.Where(from => from < names.Count))
+        {
+            names[from] = "";
+        }
+
+        foreach ((int to, JToken name) in moved)
+        {
+            while (names.Count <= to)
+            {
+                names.Add("");
+            }
+
+            names[to] = name;
+        }
+    }
+
+    /// <summary>The state kind a <c>System.json</c> list of names belongs to, or <c>null</c> for any other property.</summary>
+    private static IdKind? StateKindOfNames(string? property)
+    {
+        return property switch
+        {
+            RpgDataSchema.SwitchNamesProperty => IdKind.Switch,
+            RpgDataSchema.VariableNamesProperty => IdKind.Variable,
+            _ => null
+        };
     }
 
     /// <summary>The key an added record moves to, with its own <c>id</c> set: a map file, a tree record, an event or a database record.</summary>
@@ -158,11 +241,35 @@ internal static class ReferenceMap
             case HitUse.ByVariable:
                 references.ByVariableKinds.Add(hit.Kind);
                 break;
+            case HitUse.Range when hit.Token is JArray parameters && TryRange(parameters, out int first, out int last):
+                references.AddRange(hit.Kind, first, last);
+                break;
+            case HitUse.Range:
+                // Ends that are not whole numbers: the range may hold any id of its kind.
+                references.AddUnknownId(hit.Kind);
+                break;
+            case HitUse.Name when hit.Token is JValue { Value: long index }:
+                references.AddUsed(hit.Kind, index);
+                break;
         }
+    }
+
+    /// <summary>The two ends of a range command (121, 122): <c>p[0]</c> and <c>p[1]</c>, as the game loops from one to the other.</summary>
+    private static bool TryRange(JArray parameters, out int first, out int last)
+    {
+        last = 0;
+        first = 0;
+        return At(parameters, 0) is JValue low && TryInt(low, out first) && At(parameters, 1) is JValue high && TryInt(high, out last);
     }
 
     private static void Move(Hit hit, RemapTable table, Dictionary<int, int>? events)
     {
+        if (hit.Use == HitUse.Range && hit.Token is JArray parameters)
+        {
+            MoveRange(parameters, table.MovesOf(hit.Kind));
+            return;
+        }
+
         if (hit.Token is not JValue value)
         {
             return;
@@ -185,6 +292,37 @@ internal static class ReferenceMap
         {
             value.Value = (long)newId;
         }
+    }
+
+    /// <summary>
+    /// GR-R14: a range moves only when every id in it moves, onto consecutive ids in the same order; its ends then
+    /// name the new first and last id. A range that moves in part, or not at all, is left as it was: the planner
+    /// never makes such a move, and warns of a recorded one (<c>rules.remap_stale_reference</c>).
+    /// </summary>
+    private static void MoveRange(JArray parameters, Dictionary<int, int>? moves)
+    {
+        if (moves is null || !TryRange(parameters, out int first, out int last))
+        {
+            return;
+        }
+
+        // Id 0 and below name no switch or variable: the game skips them.
+        int low = Math.Max(first, 1);
+        if (last < low || (long)last - low + 1 > moves.Count || !moves.TryGetValue(low, out int start))
+        {
+            return;
+        }
+
+        for (int id = low + 1; id <= last; id++)
+        {
+            if (!moves.TryGetValue(id, out int target) || target != start + (id - low))
+            {
+                return;
+            }
+        }
+
+        parameters[0] = (long)start;
+        parameters[1] = (long)(start + (last - low));
     }
 
     /// <summary>
@@ -284,7 +422,7 @@ internal static class ReferenceMap
 
     private static bool Holds(JArray parameters, ParameterTest test)
     {
-        return At(parameters, test.Index) is JValue value && TryInt(value, out int actual) && actual >= test.Min && actual <= test.Max;
+        return At(parameters, test.Index) is JValue value && TryInt(value, out int actual) && (actual >= test.Min && actual <= test.Max) != test.Outside;
     }
 
     /// <summary>An id is a whole number above 0 (reference table).</summary>
@@ -396,6 +534,12 @@ internal static class ReferenceMap
         RandomRange,
 
         ByVariable,
+
+        /// <summary>A range command's parameters: every id of <see cref="Hit.Kind"/> from <c>p[0]</c> to <c>p[1]</c> (GR-R14).</summary>
+        Range,
+
+        /// <summary>The index of a name in a <c>System.json</c> list of switches or variables, as a new integer value.</summary>
+        Name,
 
         /// <summary>A string, whose text codes a remap rewrites.</summary>
         Text,
@@ -547,6 +691,8 @@ internal static class ReferenceMap
                         _emit(new Hit(HitUse.FreeText, default, text));
                     }
 
+                    VisitName(text);
+
                     _emit(new Hit(_inComment ? HitUse.Comment : HitUse.Text, default, text));
                     if (name is not null && ReferenceTable.MayBeField(name))
                     {
@@ -575,6 +721,12 @@ internal static class ReferenceMap
                 JToken? place = At(parameters, row.Index);
                 switch (row.Use)
                 {
+                    case PlaceUse.Id when row.NotMz && _mz:
+                        break;
+                    case PlaceUse.Id when place is JValue value && row.Kind is { } kind && row.NotMz:
+                        // MV reads a variable here and MZ does not; MV and an unknown engine are not told apart.
+                        _emit(new Hit(HitUse.Ambiguous, kind, value));
+                        break;
                     case PlaceUse.Id when place is JValue value && row.Kind is { } kind && row.MzOnly && !_mz:
                         // MV reads the parameter another way (285 p[2] 2 is by variable there), so its kind is unknown.
                         _emit(new Hit(HitUse.Ambiguous, kind, value));
@@ -595,7 +747,23 @@ internal static class ReferenceMap
                     case PlaceUse.ByVariable when row.Kind is { } kind:
                         _emit(new Hit(HitUse.ByVariable, kind, parameters));
                         break;
+                    case PlaceUse.Range when row.Kind is { } kind:
+                        _emit(new Hit(HitUse.Range, kind, parameters));
+                        break;
                 }
+            }
+        }
+
+        /// <summary>
+        /// A name in <c>System.json</c> <c>switches</c> or <c>variables</c>: a name that is not empty names the id at
+        /// its index (GR-R2).
+        /// </summary>
+        private void VisitName(JValue text)
+        {
+            if (_table == RpgDataSchema.SystemTable && _path.Count == 2 && _path[1].Name is null && _path[1].Index > 0 &&
+                StateKindOfNames(_path[0].Name) is { } kind && text.Value is string { Length: > 0 })
+            {
+                _emit(new Hit(HitUse.Name, kind, new JValue((long)_path[1].Index)));
             }
         }
 
